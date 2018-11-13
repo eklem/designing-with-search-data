@@ -1,0 +1,20 @@
+{
+  "name" : "Design with search data",
+  "host" : {
+    "app" : "XD",
+    "minVersion" : "13.0.0"
+  },
+  "description" : "Designing with data for search applications. Running a search engine inside XD, just for you..",
+  "id" : "cd8971b2",
+  "icons" : [ {
+    "path" : "images/icon.png",
+    "width" : 96,
+    "height" : 96
+  } ],
+  "uiEntryPoints" : [ {
+    "label" : "My Plugin",
+    "type" : "menu",
+    "commandId" : "myPluginCommand"
+  } ],
+  "version" : "0.0.1"
+}
