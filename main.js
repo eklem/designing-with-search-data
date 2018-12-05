@@ -5,21 +5,19 @@
  */
 
 var {Rectangle, Color} = require("scenegraph");
+var data = ["title 1","title 2","title 3","title 4"]
 
-function myPluginCommand(selection) {
+function populateDesign (selection) {
     // Go to Plugins > Development > Developer Console to see this log output
-    console.log("Plugin command is running!");
-
-    // Insert a red square at (0, 0) in the current artboard or group/container
-    var shape = new Rectangle();
-    shape.width = 100;
-    shape.height = 100;
-    shape.fill = new Color("#f00");
-    selection.insertionParent.addChild(shape);
-}
+    console.log("Plugin command is running, now with text!");
+    
+    let repeatGrid = selection.items[0].parent.parent;
+    let selectedTextNode = selection.items[0];
+    repeatGrid.attachTextDataSeries(selectedTextNode, data);
+    }
 
 module.exports = {
     commands: {
-        myPluginCommand: myPluginCommand
+        populateDesign: populateDesign
     }
 };
