@@ -1,0 +1,32 @@
+{
+  "name": "designing-with-search-data",
+  "version": "0.0.1",
+  "description": "Plugin for Adobe XD - A search engine running inside XD to easily populate your search application design. ",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eklem/designing-with-search-data.git"
+  },
+  "keywords": [
+    "designing-with-data",
+    "search",
+    "adobe-xd",
+    "search-engine"
+  ],
+  "dependencies": {
+    "encoding-down": "0.0.00",
+    "fergies-inverted-index": "0.0.0",
+    "levelup": "0.0.0",
+    "memdown": "0.0.0",
+    "search-index": "1.0.4"
+  },
+  "author": "Espen Klem",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/eklem/designing-with-search-data/issues"
+  },
+  "homepage": "https://github.com/eklem/designing-with-search-data#readme"
+}
