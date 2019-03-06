@@ -17,10 +17,10 @@
     "search-engine"
   ],
   "dependencies": {
-    "encoding-down": "0.0.00",
-    "fergies-inverted-index": "0.0.0",
-    "levelup": "0.0.0",
-    "memdown": "0.0.0",
+    "encoding-down": "^6.0.1",
+    "fergies-inverted-index": "0.0.12",
+    "levelup": "^4.0.0",
+    "memdown": "^3.0.0",
     "search-index": "1.0.4"
   },
   "author": "Espen Klem",
