@@ -51,7 +51,7 @@ levelup(encode(memdown('myDB'), {
     .then(function() {
       db.SEARCH('title:something')
       .then(function(results) {
-        console.log(JSON.stringify(results))
+        console.log('searching query \'title:something\', results: \n' + JSON.stringify(results))
       })
     })
     .catch(function (err) {
