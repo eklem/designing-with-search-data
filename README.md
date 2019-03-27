@@ -14,4 +14,7 @@ The actual application will be a bit different, but concept will be the same. [C
 Go vote for the [Leveldb / indexeddb for apps running inside XD](https://forums.adobexdplatform.com/t/leveldb-indexeddb-for-apps-running-inside-xd/241) feature request, over at Adobe XD Plugin Developers.
 
 
-
+## Building it
+```console
+npx webpack-cli --mode development main-webpackable.js -o main-webpacked.js
+```
