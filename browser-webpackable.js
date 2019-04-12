@@ -4,7 +4,7 @@ import encode from 'encoding-down'
 import fii from 'fergies-inverted-index'
 import levelup from 'levelup'
 import memdown from 'memdown'
-import si from 'search-index/dist/search-index.esm'
+import si from 'search-index/dist/search-index.cjs.js'
 
 
 const data = [

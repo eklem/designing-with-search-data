@@ -4,7 +4,7 @@ import encode from 'encoding-down'
 import fii from 'fergies-inverted-index'
 import levelup from 'levelup'
 import memdown from 'memdown'
-import si from 'search-index/dist/search-index.esm'
+import si from 'search-index/dist/search-index.cjs.js'
 
 
 const data = [
@@ -59,3 +59,32 @@ levelup(encode(memdown('myDB'), {
       console.error(err)
     })
 })
+
+function populateDesign (selection) {
+  console.log("Plugin command is running, now with text!");
+  levelup(encode(memdown('myDB'), {
+      valueEncoding: 'json'
+    }), (err, store) => {
+      if (err) return console.error(err)
+      let db = si({
+        fii: fii({ store: store })
+      })
+      db.PUT(dataIn)
+        .then(function(message) {
+          console.log('db.PUT: ' + message)
+        })
+        .then(function() {
+          db.SEARCH('title:something')
+          .then(function(dataOut) {
+            console.log('searching query \'title:something\', results: \n' + JSON.stringify(results))
+            let repeatGrid = selection.items[0].parent.parent;
+            let selectedTextNode = selection.items[0];
+            repeatGrid.attachTextDataSeries(selectedTextNode, dataOut);          
+          })
+        })
+        .catch(function (err) {
+          console.log('Error while db.PUT:')
+          console.error(err)
+        })
+    })
+  }

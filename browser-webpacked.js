@@ -4512,7 +4512,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var levelup__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(levelup__WEBPACK_IMPORTED_MODULE_2__);
 /* harmony import */ var memdown__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! memdown */ "./node_modules/memdown/memdown.js");
 /* harmony import */ var memdown__WEBPACK_IMPORTED_MODULE_3___default = /*#__PURE__*/__webpack_require__.n(memdown__WEBPACK_IMPORTED_MODULE_3__);
-/* harmony import */ var search_index_dist_search_index_esm__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! search-index/dist/search-index.esm */ "./node_modules/search-index/dist/search-index.esm.js");
+/* harmony import */ var search_index_dist_search_index_cjs_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! search-index/dist/search-index.cjs.js */ "./node_modules/search-index/dist/search-index.cjs.js");
+/* harmony import */ var search_index_dist_search_index_cjs_js__WEBPACK_IMPORTED_MODULE_4___default = /*#__PURE__*/__webpack_require__.n(search_index_dist_search_index_cjs_js__WEBPACK_IMPORTED_MODULE_4__);
 // npx webpack-cli --devtool false --mode development browser-webpackable.js -o browser-webpacked.js
 
 
@@ -4556,7 +4557,7 @@ levelup__WEBPACK_IMPORTED_MODULE_2___default()(encoding_down__WEBPACK_IMPORTED_M
   valueEncoding: 'json'
 }), (err, store) => {
   if (err) return console.error(err)
-  let db = Object(search_index_dist_search_index_esm__WEBPACK_IMPORTED_MODULE_4__["default"])({
+  let db = search_index_dist_search_index_cjs_js__WEBPACK_IMPORTED_MODULE_4___default()({
     fii: Object(fergies_inverted_index__WEBPACK_IMPORTED_MODULE_1__["default"])({ store: store })
   })
   db.PUT(data)
@@ -13560,23 +13561,21 @@ SafeBuffer.allocUnsafeSlow = function (size) {
 
 /***/ }),
 
-/***/ "./node_modules/search-index/dist/search-index.esm.js":
+/***/ "./node_modules/search-index/dist/search-index.cjs.js":
 /*!************************************************************!*\
-  !*** ./node_modules/search-index/dist/search-index.esm.js ***!
+  !*** ./node_modules/search-index/dist/search-index.cjs.js ***!
   \************************************************************/
-/*! exports provided: default */
-/***/ (function(module, __webpack_exports__, __webpack_require__) {
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
-__webpack_require__.r(__webpack_exports__);
-/* WEBPACK VAR INJECTION */(function(global) {/* harmony import */ var fergies_inverted_index__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! fergies-inverted-index */ "./node_modules/fergies-inverted-index/dist/fergies-inverted-index.esm.js");
-/* harmony import */ var traverse__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! traverse */ "./node_modules/traverse/index.js");
-/* harmony import */ var traverse__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(traverse__WEBPACK_IMPORTED_MODULE_1__);
-/* harmony import */ var term_vector__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! term-vector */ "./node_modules/term-vector/index.js");
-/* harmony import */ var term_vector__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(term_vector__WEBPACK_IMPORTED_MODULE_2__);
+/* WEBPACK VAR INJECTION */(function(global) {
 
+function _interopDefault (ex) { return (ex && (typeof ex === 'object') && 'default' in ex) ? ex['default'] : ex; }
 
-
+var fii = _interopDefault(__webpack_require__(/*! fergies-inverted-index */ "./node_modules/fergies-inverted-index/dist/fergies-inverted-index.esm.js"));
+var trav = _interopDefault(__webpack_require__(/*! traverse */ "./node_modules/traverse/index.js"));
+var tv = _interopDefault(__webpack_require__(/*! term-vector */ "./node_modules/term-vector/index.js"));
 
 function util (fii$$1) {
   const prefetchSearchableFields = () => {
@@ -13619,7 +13618,7 @@ function writer (fii$$1) {
   const invertDoc = function (obj) {
     var invertedDoc = {};
     // take a plain old JSON object and parse out all of the leaf-nodes
-    traverse__WEBPACK_IMPORTED_MODULE_1___default()(obj).forEach(function (node) {
+    trav(obj).forEach(function (node) {
       if (typeof node === 'undefined') return
       var that = this;
       var searchable = true;
@@ -13650,7 +13649,7 @@ function writer (fii$$1) {
         return newInvertedDoc
       }
       // for all other fields generate term frequency
-      newInvertedDoc[key] = term_vector__WEBPACK_IMPORTED_MODULE_2___default()(invertedDoc[key]).reduce((acc, cur, i, arr) => {
+      newInvertedDoc[key] = tv(invertedDoc[key]).reduce((acc, cur, i, arr) => {
         // TODO: make scoring precision an option
         acc[cur.term] = (cur.positions.length / arr.length).toFixed(2);
         return acc
@@ -13851,19 +13850,19 @@ const makeASearchIndex = idx => {
 function main (ops, callback) {
   // if no callback then return lazy load
   if (!callback) {
-    let idx = ops.fii || Object(fergies_inverted_index__WEBPACK_IMPORTED_MODULE_0__["default"])(ops);
+    let idx = ops.fii || fii(ops);
     // lazy calibration
     util(idx).calibrate();
     return makeASearchIndex(idx)
   } else {
-    Object(fergies_inverted_index__WEBPACK_IMPORTED_MODULE_0__["default"])(ops, (err, idx) => {
+    fii(ops, (err, idx) => {
       util(idx).calibrate()
         .then(() => callback(err, makeASearchIndex(idx)));
     });
   }
 }
 
-/* harmony default export */ __webpack_exports__["default"] = (main);
+module.exports = main;
 
 /* WEBPACK VAR INJECTION */}.call(this, __webpack_require__(/*! ./../../../../../node_modules/webpack/buildin/global.js */ "../../node_modules/webpack/buildin/global.js")))
 
