@@ -16,5 +16,5 @@ Go vote for the [Leveldb / indexeddb for apps running inside XD](https://forums.
 
 ## Building it (nothing really working yet)
 ```console
-npx webpack-cli --devtool false --mode development main-webpackable.js -o main-webpacked.js
+npx webpack-cli --devtool false --mode development XD-webpackable.js -o XD-webpacked.js
 ```

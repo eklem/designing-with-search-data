@@ -81,7 +81,7 @@
 /******/
 /******/
 /******/ 	// Load entry module and return exports
-/******/ 	return __webpack_require__(__webpack_require__.s = "./main-webpackable.js");
+/******/ 	return __webpack_require__(__webpack_require__.s = "./XD-webpackable.js");
 /******/ })
 /************************************************************************/
 /******/ ({
@@ -4496,10 +4496,10 @@ module.exports = g;
 
 /***/ }),
 
-/***/ "./main-webpackable.js":
-/*!*****************************!*\
-  !*** ./main-webpackable.js ***!
-  \*****************************/
+/***/ "./XD-webpackable.js":
+/*!***************************!*\
+  !*** ./XD-webpackable.js ***!
+  \***************************/
 /*! no exports provided */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
@@ -4512,8 +4512,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var levelup__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(levelup__WEBPACK_IMPORTED_MODULE_2__);
 /* harmony import */ var memdown__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! memdown */ "./node_modules/memdown/memdown.js");
 /* harmony import */ var memdown__WEBPACK_IMPORTED_MODULE_3___default = /*#__PURE__*/__webpack_require__.n(memdown__WEBPACK_IMPORTED_MODULE_3__);
-/* harmony import */ var _node_modules_search_index_dist_search_index_esm_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./node_modules/search-index/dist/search-index.esm.js */ "./node_modules/search-index/dist/search-index.esm.js");
-// npx webpack-cli --mode development main-webpackable.js -o main-webpacked.js
+/* harmony import */ var search_index_dist_search_index_esm__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! search-index/dist/search-index.esm */ "./node_modules/search-index/dist/search-index.esm.js");
+// npx webpack-cli --devtool false --mode development XD-webpackable.js -o XD-webpacked.js
 
 
 
@@ -4556,7 +4556,7 @@ levelup__WEBPACK_IMPORTED_MODULE_2___default()(encoding_down__WEBPACK_IMPORTED_M
   valueEncoding: 'json'
 }), (err, store) => {
   if (err) return console.error(err)
-  let db = Object(_node_modules_search_index_dist_search_index_esm_js__WEBPACK_IMPORTED_MODULE_4__["default"])({
+  let db = Object(search_index_dist_search_index_esm__WEBPACK_IMPORTED_MODULE_4__["default"])({
     fii: Object(fergies_inverted_index__WEBPACK_IMPORTED_MODULE_1__["default"])({ store: store })
   })
   db.PUT(data)

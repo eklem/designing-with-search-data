@@ -1,10 +1,10 @@
-// npx webpack-cli --mode development main-webpackable.js -o main-webpacked.js
+// npx webpack-cli --devtool false --mode development browser-webpackable.js -o browser-webpacked.js
 
 import encode from 'encoding-down'
 import fii from 'fergies-inverted-index'
 import levelup from 'levelup'
 import memdown from 'memdown'
-import si from './node_modules/search-index/dist/search-index.esm.js'
+import si from 'search-index/dist/search-index.esm'
 
 
 const data = [
