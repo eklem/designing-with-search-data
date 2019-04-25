@@ -1,10 +1,10 @@
 // npx webpack-cli --devtool false --mode development XD-webpackable.js -o XD-webpacked.js
 
-import encode from 'encoding-down'
+//import encode from 'encoding-down'
 import fii from 'fergies-inverted-index'
-import levelup from 'levelup'
-import memdown from 'memdown'
-import si from 'search-index/dist/search-index.es.js'
+//import levelup from 'levelup'
+//import memdown from 'memdown'
+//import si from 'search-index/dist/search-index.esm.js'
 
 
 const data = [
