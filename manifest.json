@@ -9,7 +9,7 @@
   "uiEntryPoints" : [ {
     "label" : "Populate design",
     "type" : "menu",
-    "commandId" : "Designing with search data"
+    "commandId" : "populateDesign"
   } ],
   "version" : "0.0.2"
 }
