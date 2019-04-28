@@ -7,9 +7,9 @@
   "description" : "Designing with data for search applications. Running a search engine inside XD, just for you..",
   "id" : "cd8971b2",
   "uiEntryPoints" : [ {
-    "label" : "Populate design",
+    "label" : "Populate search design",
     "type" : "menu",
-    "commandId" : "populateDesign"
+    "commandId" : "populateSearchDesign"
   } ],
   "version" : "0.0.2"
 }
