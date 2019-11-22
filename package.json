@@ -4,7 +4,10 @@
   "description": "Plugin for Adobe XD - A search engine running inside XD to easily populate your search application design. ",
   "main": "main.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "deploy": "npm run emptyPlugin && npm run copyFiles",
+    "emptyPlugin": "rm /Users/eklem/Library/Application\\ Support/Adobe/Adobe\\ XD/develop/dist/*",
+    "copyFiles": "cp {main.js,manifest.json,XD-webpacked.js} /Users/eklem/Library/Application\\ Support/Adobe/Adobe\\ XD/develop/dist/"
   },
   "repository": {
     "type": "git",
