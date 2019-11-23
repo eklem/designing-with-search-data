@@ -1,6 +1,6 @@
 {
   "name": "designing-with-search-data",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Plugin for Adobe XD - A search engine running inside XD to easily populate your search application design. ",
   "main": "main.js",
   "scripts": {
