@@ -26,7 +26,8 @@ module.exports = Level
 ```
 
 ## Building it
-Nothing really working yet, except for the browser test.
+Only working when loading the plugin (check developer console), but not in interaction with SceneGraph. That's next to fix.
+
 ```console
 npm run-script deploy
 ```
