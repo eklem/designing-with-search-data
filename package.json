@@ -5,7 +5,8 @@
   "main": "main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "deploy": "npm run emptyPlugin && npm run copyFiles",
+    "deploy": "npm run compile-for-XD && npm run emptyPlugin && npm run copyFiles",
+    "compile-for-XD": "webpack",
     "emptyPlugin": "rm /Users/eklem/Library/Application\\ Support/Adobe/Adobe\\ XD/develop/dist/*",
     "copyFiles": "cp {main.js,manifest.json,XD-webpacked.js} /Users/eklem/Library/Application\\ Support/Adobe/Adobe\\ XD/develop/dist/"
   },
@@ -24,7 +25,9 @@
     "fergies-inverted-index": "0.0.12",
     "levelup": "^4.0.0",
     "memdown": "^3.0.0",
-    "search-index": "1.0.4"
+    "search-index": "1.0.4",
+    "webpack": "^4.36.1",
+    "webpack-cli": "^3.3.6"
   },
   "author": "Espen Klem",
   "license": "MIT",
