@@ -3175,11 +3175,11 @@ function isnan (val) {
 /*! no static exports found */
 /***/ (function(module, exports, __webpack_require__) {
 
-var AbstractIterator = __webpack_require__(/*! abstract-leveldown */ "./node_modules/abstract-leveldown/index.js").AbstractIterator
+var AbstractIterator = __webpack_require__(/*! abstract-leveldown */ "./node_modules/deferred-leveldown/node_modules/abstract-leveldown/index.js").AbstractIterator
 var inherits = __webpack_require__(/*! inherits */ "./node_modules/inherits/inherits_browser.js")
 
-function DeferredIterator (options) {
-  AbstractIterator.call(this, options)
+function DeferredIterator (db, options) {
+  AbstractIterator.call(this, db)
 
   this._options = options
   this._iterator = null
@@ -3206,6 +3206,11 @@ DeferredIterator.prototype._operation = function (method, args) {
   }
 })
 
+// Must defer seek() rather than _seek() because it requires db._serializeKey to be available
+DeferredIterator.prototype.seek = function () {
+  this._operation('seek', arguments)
+}
+
 module.exports = DeferredIterator
 
 
@@ -3218,20 +3223,31 @@ module.exports = DeferredIterator
 /*! no static exports found */
 /***/ (function(module, exports, __webpack_require__) {
 
-var AbstractLevelDOWN = __webpack_require__(/*! abstract-leveldown */ "./node_modules/abstract-leveldown/index.js").AbstractLevelDOWN
+var AbstractLevelDOWN = __webpack_require__(/*! abstract-leveldown */ "./node_modules/deferred-leveldown/node_modules/abstract-leveldown/index.js").AbstractLevelDOWN
 var inherits = __webpack_require__(/*! inherits */ "./node_modules/inherits/inherits_browser.js")
 var DeferredIterator = __webpack_require__(/*! ./deferred-iterator */ "./node_modules/deferred-leveldown/deferred-iterator.js")
-var deferrables = 'put get del batch'.split(' ')
+var deferrables = 'put get del batch clear'.split(' ')
+var optionalDeferrables = 'approximateSize compactRange'.split(' ')
 
 function DeferredLevelDOWN (db) {
-  AbstractLevelDOWN.call(this, '')
+  AbstractLevelDOWN.call(this, db.supports || {})
+
+  // TODO (future major): remove this fallback; db must have manifest that
+  // declares approximateSize and compactRange in additionalMethods.
+  optionalDeferrables.forEach(function (m) {
+    if (typeof db[m] === 'function' && !this.supports.additionalMethods[m]) {
+      this.supports.additionalMethods[m] = true
+    }
+  }, this)
+
   this._db = db
   this._operations = []
-  this._iterators = []
   closed(this)
 }
 
 inherits(DeferredLevelDOWN, AbstractLevelDOWN)
+
+DeferredLevelDOWN.prototype.type = 'deferred-leveldown'
 
 DeferredLevelDOWN.prototype._open = function (options, callback) {
   var self = this
@@ -3240,13 +3256,14 @@ DeferredLevelDOWN.prototype._open = function (options, callback) {
     if (err) return callback(err)
 
     self._operations.forEach(function (op) {
-      self._db[op.method].apply(self._db, op.args)
+      if (op.iterator) {
+        op.iterator.setDb(self._db)
+      } else {
+        self._db[op.method].apply(self._db, op.args)
+      }
     })
     self._operations = []
-    self._iterators.forEach(function (it) {
-      it.setDb(self._db)
-    })
-    self._iterators = []
+
     open(self)
     callback()
   })
@@ -3268,11 +3285,11 @@ function open (self) {
       return this._db[m].apply(this._db, arguments)
     }
   })
-  if (self._db.approximateSize) {
-    self.approximateSize = function () {
-      return this._db.approximateSize.apply(this._db, arguments)
+  Object.keys(self.supports.additionalMethods).forEach(function (m) {
+    self[m] = function () {
+      return this._db[m].apply(this._db, arguments)
     }
-  }
+  })
 }
 
 function closed (self) {
@@ -3281,17 +3298,14 @@ function closed (self) {
       this._operations.push({ method: m, args: arguments })
     }
   })
-  if (typeof self._db.approximateSize === 'function') {
-    self.approximateSize = function () {
-      this._operations.push({
-        method: 'approximateSize',
-        args: arguments
-      })
+  Object.keys(self.supports.additionalMethods).forEach(function (m) {
+    self[m] = function () {
+      this._operations.push({ method: m, args: arguments })
     }
-  }
+  })
   self._iterator = function (options) {
-    var it = new DeferredIterator(options)
-    this._iterators.push(it)
+    var it = new DeferredIterator(self, options)
+    this._operations.push({ iterator: it })
     return it
   }
 }
@@ -3310,6 +3324,523 @@ module.exports.DeferredIterator = DeferredIterator
 
 /***/ }),
 
+/***/ "./node_modules/deferred-leveldown/node_modules/abstract-leveldown/abstract-chained-batch.js":
+/*!***************************************************************************************************!*\
+  !*** ./node_modules/deferred-leveldown/node_modules/abstract-leveldown/abstract-chained-batch.js ***!
+  \***************************************************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports) {
+
+function AbstractChainedBatch (db) {
+  if (typeof db !== 'object' || db === null) {
+    throw new TypeError('First argument must be an abstract-leveldown compliant store')
+  }
+
+  this.db = db
+  this._operations = []
+  this._written = false
+}
+
+AbstractChainedBatch.prototype._checkWritten = function () {
+  if (this._written) {
+    throw new Error('write() already called on this batch')
+  }
+}
+
+AbstractChainedBatch.prototype.put = function (key, value) {
+  this._checkWritten()
+
+  var err = this.db._checkKey(key) || this.db._checkValue(value)
+  if (err) throw err
+
+  key = this.db._serializeKey(key)
+  value = this.db._serializeValue(value)
+
+  this._put(key, value)
+
+  return this
+}
+
+AbstractChainedBatch.prototype._put = function (key, value) {
+  this._operations.push({ type: 'put', key: key, value: value })
+}
+
+AbstractChainedBatch.prototype.del = function (key) {
+  this._checkWritten()
+
+  var err = this.db._checkKey(key)
+  if (err) throw err
+
+  key = this.db._serializeKey(key)
+  this._del(key)
+
+  return this
+}
+
+AbstractChainedBatch.prototype._del = function (key) {
+  this._operations.push({ type: 'del', key: key })
+}
+
+AbstractChainedBatch.prototype.clear = function () {
+  this._checkWritten()
+  this._clear()
+
+  return this
+}
+
+AbstractChainedBatch.prototype._clear = function () {
+  this._operations = []
+}
+
+AbstractChainedBatch.prototype.write = function (options, callback) {
+  this._checkWritten()
+
+  if (typeof options === 'function') { callback = options }
+  if (typeof callback !== 'function') {
+    throw new Error('write() requires a callback argument')
+  }
+  if (typeof options !== 'object' || options === null) {
+    options = {}
+  }
+
+  this._written = true
+  this._write(options, callback)
+}
+
+AbstractChainedBatch.prototype._write = function (options, callback) {
+  this.db._batch(this._operations, options, callback)
+}
+
+module.exports = AbstractChainedBatch
+
+
+/***/ }),
+
+/***/ "./node_modules/deferred-leveldown/node_modules/abstract-leveldown/abstract-iterator.js":
+/*!**********************************************************************************************!*\
+  !*** ./node_modules/deferred-leveldown/node_modules/abstract-leveldown/abstract-iterator.js ***!
+  \**********************************************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+/* WEBPACK VAR INJECTION */(function(process) {function AbstractIterator (db) {
+  if (typeof db !== 'object' || db === null) {
+    throw new TypeError('First argument must be an abstract-leveldown compliant store')
+  }
+
+  this.db = db
+  this._ended = false
+  this._nexting = false
+}
+
+AbstractIterator.prototype.next = function (callback) {
+  var self = this
+
+  if (typeof callback !== 'function') {
+    throw new Error('next() requires a callback argument')
+  }
+
+  if (self._ended) {
+    process.nextTick(callback, new Error('cannot call next() after end()'))
+    return self
+  }
+
+  if (self._nexting) {
+    process.nextTick(callback, new Error('cannot call next() before previous next() has completed'))
+    return self
+  }
+
+  self._nexting = true
+  self._next(function () {
+    self._nexting = false
+    callback.apply(null, arguments)
+  })
+
+  return self
+}
+
+AbstractIterator.prototype._next = function (callback) {
+  process.nextTick(callback)
+}
+
+AbstractIterator.prototype.seek = function (target) {
+  if (this._ended) {
+    throw new Error('cannot call seek() after end()')
+  }
+  if (this._nexting) {
+    throw new Error('cannot call seek() before next() has completed')
+  }
+
+  target = this.db._serializeKey(target)
+  this._seek(target)
+}
+
+AbstractIterator.prototype._seek = function (target) {}
+
+AbstractIterator.prototype.end = function (callback) {
+  if (typeof callback !== 'function') {
+    throw new Error('end() requires a callback argument')
+  }
+
+  if (this._ended) {
+    return process.nextTick(callback, new Error('end() already called on iterator'))
+  }
+
+  this._ended = true
+  this._end(callback)
+}
+
+AbstractIterator.prototype._end = function (callback) {
+  process.nextTick(callback)
+}
+
+module.exports = AbstractIterator
+
+/* WEBPACK VAR INJECTION */}.call(this, __webpack_require__(/*! ./../../../process/browser.js */ "./node_modules/process/browser.js")))
+
+/***/ }),
+
+/***/ "./node_modules/deferred-leveldown/node_modules/abstract-leveldown/abstract-leveldown.js":
+/*!***********************************************************************************************!*\
+  !*** ./node_modules/deferred-leveldown/node_modules/abstract-leveldown/abstract-leveldown.js ***!
+  \***********************************************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+/* WEBPACK VAR INJECTION */(function(process, Buffer) {var xtend = __webpack_require__(/*! xtend */ "./node_modules/xtend/immutable.js")
+var supports = __webpack_require__(/*! level-supports */ "./node_modules/level-supports/index.js")
+var AbstractIterator = __webpack_require__(/*! ./abstract-iterator */ "./node_modules/deferred-leveldown/node_modules/abstract-leveldown/abstract-iterator.js")
+var AbstractChainedBatch = __webpack_require__(/*! ./abstract-chained-batch */ "./node_modules/deferred-leveldown/node_modules/abstract-leveldown/abstract-chained-batch.js")
+var hasOwnProperty = Object.prototype.hasOwnProperty
+var rangeOptions = 'start end gt gte lt lte'.split(' ')
+
+function AbstractLevelDOWN (manifest) {
+  this.status = 'new'
+
+  // TODO (next major): make this mandatory
+  this.supports = supports(manifest, {
+    status: true
+  })
+}
+
+AbstractLevelDOWN.prototype.open = function (options, callback) {
+  var self = this
+  var oldStatus = this.status
+
+  if (typeof options === 'function') callback = options
+
+  if (typeof callback !== 'function') {
+    throw new Error('open() requires a callback argument')
+  }
+
+  if (typeof options !== 'object' || options === null) options = {}
+
+  options.createIfMissing = options.createIfMissing !== false
+  options.errorIfExists = !!options.errorIfExists
+
+  this.status = 'opening'
+  this._open(options, function (err) {
+    if (err) {
+      self.status = oldStatus
+      return callback(err)
+    }
+    self.status = 'open'
+    callback()
+  })
+}
+
+AbstractLevelDOWN.prototype._open = function (options, callback) {
+  process.nextTick(callback)
+}
+
+AbstractLevelDOWN.prototype.close = function (callback) {
+  var self = this
+  var oldStatus = this.status
+
+  if (typeof callback !== 'function') {
+    throw new Error('close() requires a callback argument')
+  }
+
+  this.status = 'closing'
+  this._close(function (err) {
+    if (err) {
+      self.status = oldStatus
+      return callback(err)
+    }
+    self.status = 'closed'
+    callback()
+  })
+}
+
+AbstractLevelDOWN.prototype._close = function (callback) {
+  process.nextTick(callback)
+}
+
+AbstractLevelDOWN.prototype.get = function (key, options, callback) {
+  if (typeof options === 'function') callback = options
+
+  if (typeof callback !== 'function') {
+    throw new Error('get() requires a callback argument')
+  }
+
+  var err = this._checkKey(key)
+  if (err) return process.nextTick(callback, err)
+
+  key = this._serializeKey(key)
+
+  if (typeof options !== 'object' || options === null) options = {}
+
+  options.asBuffer = options.asBuffer !== false
+
+  this._get(key, options, callback)
+}
+
+AbstractLevelDOWN.prototype._get = function (key, options, callback) {
+  process.nextTick(function () { callback(new Error('NotFound')) })
+}
+
+AbstractLevelDOWN.prototype.put = function (key, value, options, callback) {
+  if (typeof options === 'function') callback = options
+
+  if (typeof callback !== 'function') {
+    throw new Error('put() requires a callback argument')
+  }
+
+  var err = this._checkKey(key) || this._checkValue(value)
+  if (err) return process.nextTick(callback, err)
+
+  key = this._serializeKey(key)
+  value = this._serializeValue(value)
+
+  if (typeof options !== 'object' || options === null) options = {}
+
+  this._put(key, value, options, callback)
+}
+
+AbstractLevelDOWN.prototype._put = function (key, value, options, callback) {
+  process.nextTick(callback)
+}
+
+AbstractLevelDOWN.prototype.del = function (key, options, callback) {
+  if (typeof options === 'function') callback = options
+
+  if (typeof callback !== 'function') {
+    throw new Error('del() requires a callback argument')
+  }
+
+  var err = this._checkKey(key)
+  if (err) return process.nextTick(callback, err)
+
+  key = this._serializeKey(key)
+
+  if (typeof options !== 'object' || options === null) options = {}
+
+  this._del(key, options, callback)
+}
+
+AbstractLevelDOWN.prototype._del = function (key, options, callback) {
+  process.nextTick(callback)
+}
+
+AbstractLevelDOWN.prototype.batch = function (array, options, callback) {
+  if (!arguments.length) return this._chainedBatch()
+
+  if (typeof options === 'function') callback = options
+
+  if (typeof array === 'function') callback = array
+
+  if (typeof callback !== 'function') {
+    throw new Error('batch(array) requires a callback argument')
+  }
+
+  if (!Array.isArray(array)) {
+    return process.nextTick(callback, new Error('batch(array) requires an array argument'))
+  }
+
+  if (array.length === 0) {
+    return process.nextTick(callback)
+  }
+
+  if (typeof options !== 'object' || options === null) options = {}
+
+  var serialized = new Array(array.length)
+
+  for (var i = 0; i < array.length; i++) {
+    if (typeof array[i] !== 'object' || array[i] === null) {
+      return process.nextTick(callback, new Error('batch(array) element must be an object and not `null`'))
+    }
+
+    var e = xtend(array[i])
+
+    if (e.type !== 'put' && e.type !== 'del') {
+      return process.nextTick(callback, new Error("`type` must be 'put' or 'del'"))
+    }
+
+    var err = this._checkKey(e.key)
+    if (err) return process.nextTick(callback, err)
+
+    e.key = this._serializeKey(e.key)
+
+    if (e.type === 'put') {
+      var valueErr = this._checkValue(e.value)
+      if (valueErr) return process.nextTick(callback, valueErr)
+
+      e.value = this._serializeValue(e.value)
+    }
+
+    serialized[i] = e
+  }
+
+  this._batch(serialized, options, callback)
+}
+
+AbstractLevelDOWN.prototype._batch = function (array, options, callback) {
+  process.nextTick(callback)
+}
+
+AbstractLevelDOWN.prototype.clear = function (options, callback) {
+  if (typeof options === 'function') {
+    callback = options
+  } else if (typeof callback !== 'function') {
+    throw new Error('clear() requires a callback argument')
+  }
+
+  options = cleanRangeOptions(this, options)
+  options.reverse = !!options.reverse
+  options.limit = 'limit' in options ? options.limit : -1
+
+  this._clear(options, callback)
+}
+
+AbstractLevelDOWN.prototype._clear = function (options, callback) {
+  // Avoid setupIteratorOptions, would serialize range options a second time.
+  options.keys = true
+  options.values = false
+  options.keyAsBuffer = true
+  options.valueAsBuffer = true
+
+  var iterator = this._iterator(options)
+  var emptyOptions = {}
+  var self = this
+
+  var next = function (err) {
+    if (err) {
+      return iterator.end(function () {
+        callback(err)
+      })
+    }
+
+    iterator.next(function (err, key) {
+      if (err) return next(err)
+      if (key === undefined) return iterator.end(callback)
+
+      // This could be optimized by using a batch, but the default _clear
+      // is not meant to be fast. Implementations have more room to optimize
+      // if they override _clear. Note: using _del bypasses key serialization.
+      self._del(key, emptyOptions, next)
+    })
+  }
+
+  next()
+}
+
+AbstractLevelDOWN.prototype._setupIteratorOptions = function (options) {
+  options = cleanRangeOptions(this, options)
+
+  options.reverse = !!options.reverse
+  options.keys = options.keys !== false
+  options.values = options.values !== false
+  options.limit = 'limit' in options ? options.limit : -1
+  options.keyAsBuffer = options.keyAsBuffer !== false
+  options.valueAsBuffer = options.valueAsBuffer !== false
+
+  return options
+}
+
+function cleanRangeOptions (db, options) {
+  var result = {}
+
+  for (var k in options) {
+    if (!hasOwnProperty.call(options, k)) continue
+
+    var opt = options[k]
+
+    if (isRangeOption(k)) {
+      // Note that we don't reject nullish and empty options here. While
+      // those types are invalid as keys, they are valid as range options.
+      opt = db._serializeKey(opt)
+    }
+
+    result[k] = opt
+  }
+
+  return result
+}
+
+function isRangeOption (k) {
+  return rangeOptions.indexOf(k) !== -1
+}
+
+AbstractLevelDOWN.prototype.iterator = function (options) {
+  if (typeof options !== 'object' || options === null) options = {}
+  options = this._setupIteratorOptions(options)
+  return this._iterator(options)
+}
+
+AbstractLevelDOWN.prototype._iterator = function (options) {
+  return new AbstractIterator(this)
+}
+
+AbstractLevelDOWN.prototype._chainedBatch = function () {
+  return new AbstractChainedBatch(this)
+}
+
+AbstractLevelDOWN.prototype._serializeKey = function (key) {
+  return key
+}
+
+AbstractLevelDOWN.prototype._serializeValue = function (value) {
+  return value
+}
+
+AbstractLevelDOWN.prototype._checkKey = function (key) {
+  if (key === null || key === undefined) {
+    return new Error('key cannot be `null` or `undefined`')
+  } else if (Buffer.isBuffer(key) && key.length === 0) {
+    return new Error('key cannot be an empty Buffer')
+  } else if (key === '') {
+    return new Error('key cannot be an empty String')
+  } else if (Array.isArray(key) && key.length === 0) {
+    return new Error('key cannot be an empty Array')
+  }
+}
+
+AbstractLevelDOWN.prototype._checkValue = function (value) {
+  if (value === null || value === undefined) {
+    return new Error('value cannot be `null` or `undefined`')
+  }
+}
+
+module.exports = AbstractLevelDOWN
+
+/* WEBPACK VAR INJECTION */}.call(this, __webpack_require__(/*! ./../../../process/browser.js */ "./node_modules/process/browser.js"), __webpack_require__(/*! ./../../../buffer/index.js */ "./node_modules/buffer/index.js").Buffer))
+
+/***/ }),
+
+/***/ "./node_modules/deferred-leveldown/node_modules/abstract-leveldown/index.js":
+/*!**********************************************************************************!*\
+  !*** ./node_modules/deferred-leveldown/node_modules/abstract-leveldown/index.js ***!
+  \**********************************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+exports.AbstractLevelDOWN = __webpack_require__(/*! ./abstract-leveldown */ "./node_modules/deferred-leveldown/node_modules/abstract-leveldown/abstract-leveldown.js")
+exports.AbstractIterator = __webpack_require__(/*! ./abstract-iterator */ "./node_modules/deferred-leveldown/node_modules/abstract-leveldown/abstract-iterator.js")
+exports.AbstractChainedBatch = __webpack_require__(/*! ./abstract-chained-batch */ "./node_modules/deferred-leveldown/node_modules/abstract-leveldown/abstract-chained-batch.js")
+
+
+/***/ }),
+
 /***/ "./node_modules/encoding-down/index.js":
 /*!*********************************************!*\
   !*** ./node_modules/encoding-down/index.js ***!
@@ -3320,18 +3851,41 @@ module.exports.DeferredIterator = DeferredIterator
 "use strict";
 
 
-var AbstractLevelDOWN = __webpack_require__(/*! abstract-leveldown */ "./node_modules/abstract-leveldown/index.js").AbstractLevelDOWN
-var AbstractChainedBatch = __webpack_require__(/*! abstract-leveldown */ "./node_modules/abstract-leveldown/index.js").AbstractChainedBatch
-var AbstractIterator = __webpack_require__(/*! abstract-leveldown */ "./node_modules/abstract-leveldown/index.js").AbstractIterator
+var AbstractLevelDOWN = __webpack_require__(/*! abstract-leveldown */ "./node_modules/encoding-down/node_modules/abstract-leveldown/index.js").AbstractLevelDOWN
+var AbstractChainedBatch = __webpack_require__(/*! abstract-leveldown */ "./node_modules/encoding-down/node_modules/abstract-leveldown/index.js").AbstractChainedBatch
+var AbstractIterator = __webpack_require__(/*! abstract-leveldown */ "./node_modules/encoding-down/node_modules/abstract-leveldown/index.js").AbstractIterator
 var inherits = __webpack_require__(/*! inherits */ "./node_modules/inherits/inherits_browser.js")
 var Codec = __webpack_require__(/*! level-codec */ "./node_modules/level-codec/index.js")
 var EncodingError = __webpack_require__(/*! level-errors */ "./node_modules/level-errors/errors.js").EncodingError
+var rangeMethods = ['approximateSize', 'compactRange']
 
 module.exports = DB.default = DB
 
 function DB (db, opts) {
   if (!(this instanceof DB)) return new DB(db, opts)
-  AbstractLevelDOWN.call(this, '')
+
+  var manifest = db.supports || {}
+  var additionalMethods = manifest.additionalMethods || {}
+
+  AbstractLevelDOWN.call(this, manifest)
+
+  this.supports.encodings = true
+  this.supports.additionalMethods = {}
+
+  rangeMethods.forEach(function (m) {
+    // TODO (future major): remove this fallback
+    var fallback = typeof db[m] === 'function'
+
+    if (additionalMethods[m] || fallback) {
+      this.supports.additionalMethods[m] = true
+
+      this[m] = function (start, end, opts, cb) {
+        start = this.codec.encodeKey(start, opts)
+        end = this.codec.encodeKey(end, opts)
+        return this.db[m](start, end, opts, cb)
+      }
+    }
+  }, this)
 
   opts = opts || {}
   if (typeof opts.keyEncoding === 'undefined') opts.keyEncoding = 'utf8'
@@ -3342,6 +3896,8 @@ function DB (db, opts) {
 }
 
 inherits(DB, AbstractLevelDOWN)
+
+DB.prototype.type = 'encoding-down'
 
 DB.prototype._serializeKey =
 DB.prototype._serializeValue = function (datum) {
@@ -3397,10 +3953,9 @@ DB.prototype._iterator = function (opts) {
   return new Iterator(this, opts)
 }
 
-DB.prototype.approximateSize = function (start, end, opts, cb) {
-  start = this.codec.encodeKey(start, opts)
-  end = this.codec.encodeKey(end, opts)
-  return this.db.approximateSize(start, end, opts, cb)
+DB.prototype._clear = function (opts, callback) {
+  opts = this.codec.encodeLtgt(opts)
+  this.db.clear(opts, callback)
 }
 
 function Iterator (db, opts) {
@@ -3437,6 +3992,11 @@ Iterator.prototype._next = function (cb) {
   })
 }
 
+Iterator.prototype._seek = function (key) {
+  key = this.codec.encodeKey(key, this.opts)
+  this.it.seek(key)
+}
+
 Iterator.prototype._end = function (cb) {
   this.it.end(cb)
 }
@@ -3467,6 +4027,523 @@ Batch.prototype._clear = function () {
 Batch.prototype._write = function (opts, cb) {
   this.batch.write(opts, cb)
 }
+
+
+/***/ }),
+
+/***/ "./node_modules/encoding-down/node_modules/abstract-leveldown/abstract-chained-batch.js":
+/*!**********************************************************************************************!*\
+  !*** ./node_modules/encoding-down/node_modules/abstract-leveldown/abstract-chained-batch.js ***!
+  \**********************************************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports) {
+
+function AbstractChainedBatch (db) {
+  if (typeof db !== 'object' || db === null) {
+    throw new TypeError('First argument must be an abstract-leveldown compliant store')
+  }
+
+  this.db = db
+  this._operations = []
+  this._written = false
+}
+
+AbstractChainedBatch.prototype._checkWritten = function () {
+  if (this._written) {
+    throw new Error('write() already called on this batch')
+  }
+}
+
+AbstractChainedBatch.prototype.put = function (key, value) {
+  this._checkWritten()
+
+  var err = this.db._checkKey(key) || this.db._checkValue(value)
+  if (err) throw err
+
+  key = this.db._serializeKey(key)
+  value = this.db._serializeValue(value)
+
+  this._put(key, value)
+
+  return this
+}
+
+AbstractChainedBatch.prototype._put = function (key, value) {
+  this._operations.push({ type: 'put', key: key, value: value })
+}
+
+AbstractChainedBatch.prototype.del = function (key) {
+  this._checkWritten()
+
+  var err = this.db._checkKey(key)
+  if (err) throw err
+
+  key = this.db._serializeKey(key)
+  this._del(key)
+
+  return this
+}
+
+AbstractChainedBatch.prototype._del = function (key) {
+  this._operations.push({ type: 'del', key: key })
+}
+
+AbstractChainedBatch.prototype.clear = function () {
+  this._checkWritten()
+  this._clear()
+
+  return this
+}
+
+AbstractChainedBatch.prototype._clear = function () {
+  this._operations = []
+}
+
+AbstractChainedBatch.prototype.write = function (options, callback) {
+  this._checkWritten()
+
+  if (typeof options === 'function') { callback = options }
+  if (typeof callback !== 'function') {
+    throw new Error('write() requires a callback argument')
+  }
+  if (typeof options !== 'object' || options === null) {
+    options = {}
+  }
+
+  this._written = true
+  this._write(options, callback)
+}
+
+AbstractChainedBatch.prototype._write = function (options, callback) {
+  this.db._batch(this._operations, options, callback)
+}
+
+module.exports = AbstractChainedBatch
+
+
+/***/ }),
+
+/***/ "./node_modules/encoding-down/node_modules/abstract-leveldown/abstract-iterator.js":
+/*!*****************************************************************************************!*\
+  !*** ./node_modules/encoding-down/node_modules/abstract-leveldown/abstract-iterator.js ***!
+  \*****************************************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+/* WEBPACK VAR INJECTION */(function(process) {function AbstractIterator (db) {
+  if (typeof db !== 'object' || db === null) {
+    throw new TypeError('First argument must be an abstract-leveldown compliant store')
+  }
+
+  this.db = db
+  this._ended = false
+  this._nexting = false
+}
+
+AbstractIterator.prototype.next = function (callback) {
+  var self = this
+
+  if (typeof callback !== 'function') {
+    throw new Error('next() requires a callback argument')
+  }
+
+  if (self._ended) {
+    process.nextTick(callback, new Error('cannot call next() after end()'))
+    return self
+  }
+
+  if (self._nexting) {
+    process.nextTick(callback, new Error('cannot call next() before previous next() has completed'))
+    return self
+  }
+
+  self._nexting = true
+  self._next(function () {
+    self._nexting = false
+    callback.apply(null, arguments)
+  })
+
+  return self
+}
+
+AbstractIterator.prototype._next = function (callback) {
+  process.nextTick(callback)
+}
+
+AbstractIterator.prototype.seek = function (target) {
+  if (this._ended) {
+    throw new Error('cannot call seek() after end()')
+  }
+  if (this._nexting) {
+    throw new Error('cannot call seek() before next() has completed')
+  }
+
+  target = this.db._serializeKey(target)
+  this._seek(target)
+}
+
+AbstractIterator.prototype._seek = function (target) {}
+
+AbstractIterator.prototype.end = function (callback) {
+  if (typeof callback !== 'function') {
+    throw new Error('end() requires a callback argument')
+  }
+
+  if (this._ended) {
+    return process.nextTick(callback, new Error('end() already called on iterator'))
+  }
+
+  this._ended = true
+  this._end(callback)
+}
+
+AbstractIterator.prototype._end = function (callback) {
+  process.nextTick(callback)
+}
+
+module.exports = AbstractIterator
+
+/* WEBPACK VAR INJECTION */}.call(this, __webpack_require__(/*! ./../../../process/browser.js */ "./node_modules/process/browser.js")))
+
+/***/ }),
+
+/***/ "./node_modules/encoding-down/node_modules/abstract-leveldown/abstract-leveldown.js":
+/*!******************************************************************************************!*\
+  !*** ./node_modules/encoding-down/node_modules/abstract-leveldown/abstract-leveldown.js ***!
+  \******************************************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+/* WEBPACK VAR INJECTION */(function(process, Buffer) {var xtend = __webpack_require__(/*! xtend */ "./node_modules/xtend/immutable.js")
+var supports = __webpack_require__(/*! level-supports */ "./node_modules/level-supports/index.js")
+var AbstractIterator = __webpack_require__(/*! ./abstract-iterator */ "./node_modules/encoding-down/node_modules/abstract-leveldown/abstract-iterator.js")
+var AbstractChainedBatch = __webpack_require__(/*! ./abstract-chained-batch */ "./node_modules/encoding-down/node_modules/abstract-leveldown/abstract-chained-batch.js")
+var hasOwnProperty = Object.prototype.hasOwnProperty
+var rangeOptions = 'start end gt gte lt lte'.split(' ')
+
+function AbstractLevelDOWN (manifest) {
+  this.status = 'new'
+
+  // TODO (next major): make this mandatory
+  this.supports = supports(manifest, {
+    status: true
+  })
+}
+
+AbstractLevelDOWN.prototype.open = function (options, callback) {
+  var self = this
+  var oldStatus = this.status
+
+  if (typeof options === 'function') callback = options
+
+  if (typeof callback !== 'function') {
+    throw new Error('open() requires a callback argument')
+  }
+
+  if (typeof options !== 'object' || options === null) options = {}
+
+  options.createIfMissing = options.createIfMissing !== false
+  options.errorIfExists = !!options.errorIfExists
+
+  this.status = 'opening'
+  this._open(options, function (err) {
+    if (err) {
+      self.status = oldStatus
+      return callback(err)
+    }
+    self.status = 'open'
+    callback()
+  })
+}
+
+AbstractLevelDOWN.prototype._open = function (options, callback) {
+  process.nextTick(callback)
+}
+
+AbstractLevelDOWN.prototype.close = function (callback) {
+  var self = this
+  var oldStatus = this.status
+
+  if (typeof callback !== 'function') {
+    throw new Error('close() requires a callback argument')
+  }
+
+  this.status = 'closing'
+  this._close(function (err) {
+    if (err) {
+      self.status = oldStatus
+      return callback(err)
+    }
+    self.status = 'closed'
+    callback()
+  })
+}
+
+AbstractLevelDOWN.prototype._close = function (callback) {
+  process.nextTick(callback)
+}
+
+AbstractLevelDOWN.prototype.get = function (key, options, callback) {
+  if (typeof options === 'function') callback = options
+
+  if (typeof callback !== 'function') {
+    throw new Error('get() requires a callback argument')
+  }
+
+  var err = this._checkKey(key)
+  if (err) return process.nextTick(callback, err)
+
+  key = this._serializeKey(key)
+
+  if (typeof options !== 'object' || options === null) options = {}
+
+  options.asBuffer = options.asBuffer !== false
+
+  this._get(key, options, callback)
+}
+
+AbstractLevelDOWN.prototype._get = function (key, options, callback) {
+  process.nextTick(function () { callback(new Error('NotFound')) })
+}
+
+AbstractLevelDOWN.prototype.put = function (key, value, options, callback) {
+  if (typeof options === 'function') callback = options
+
+  if (typeof callback !== 'function') {
+    throw new Error('put() requires a callback argument')
+  }
+
+  var err = this._checkKey(key) || this._checkValue(value)
+  if (err) return process.nextTick(callback, err)
+
+  key = this._serializeKey(key)
+  value = this._serializeValue(value)
+
+  if (typeof options !== 'object' || options === null) options = {}
+
+  this._put(key, value, options, callback)
+}
+
+AbstractLevelDOWN.prototype._put = function (key, value, options, callback) {
+  process.nextTick(callback)
+}
+
+AbstractLevelDOWN.prototype.del = function (key, options, callback) {
+  if (typeof options === 'function') callback = options
+
+  if (typeof callback !== 'function') {
+    throw new Error('del() requires a callback argument')
+  }
+
+  var err = this._checkKey(key)
+  if (err) return process.nextTick(callback, err)
+
+  key = this._serializeKey(key)
+
+  if (typeof options !== 'object' || options === null) options = {}
+
+  this._del(key, options, callback)
+}
+
+AbstractLevelDOWN.prototype._del = function (key, options, callback) {
+  process.nextTick(callback)
+}
+
+AbstractLevelDOWN.prototype.batch = function (array, options, callback) {
+  if (!arguments.length) return this._chainedBatch()
+
+  if (typeof options === 'function') callback = options
+
+  if (typeof array === 'function') callback = array
+
+  if (typeof callback !== 'function') {
+    throw new Error('batch(array) requires a callback argument')
+  }
+
+  if (!Array.isArray(array)) {
+    return process.nextTick(callback, new Error('batch(array) requires an array argument'))
+  }
+
+  if (array.length === 0) {
+    return process.nextTick(callback)
+  }
+
+  if (typeof options !== 'object' || options === null) options = {}
+
+  var serialized = new Array(array.length)
+
+  for (var i = 0; i < array.length; i++) {
+    if (typeof array[i] !== 'object' || array[i] === null) {
+      return process.nextTick(callback, new Error('batch(array) element must be an object and not `null`'))
+    }
+
+    var e = xtend(array[i])
+
+    if (e.type !== 'put' && e.type !== 'del') {
+      return process.nextTick(callback, new Error("`type` must be 'put' or 'del'"))
+    }
+
+    var err = this._checkKey(e.key)
+    if (err) return process.nextTick(callback, err)
+
+    e.key = this._serializeKey(e.key)
+
+    if (e.type === 'put') {
+      var valueErr = this._checkValue(e.value)
+      if (valueErr) return process.nextTick(callback, valueErr)
+
+      e.value = this._serializeValue(e.value)
+    }
+
+    serialized[i] = e
+  }
+
+  this._batch(serialized, options, callback)
+}
+
+AbstractLevelDOWN.prototype._batch = function (array, options, callback) {
+  process.nextTick(callback)
+}
+
+AbstractLevelDOWN.prototype.clear = function (options, callback) {
+  if (typeof options === 'function') {
+    callback = options
+  } else if (typeof callback !== 'function') {
+    throw new Error('clear() requires a callback argument')
+  }
+
+  options = cleanRangeOptions(this, options)
+  options.reverse = !!options.reverse
+  options.limit = 'limit' in options ? options.limit : -1
+
+  this._clear(options, callback)
+}
+
+AbstractLevelDOWN.prototype._clear = function (options, callback) {
+  // Avoid setupIteratorOptions, would serialize range options a second time.
+  options.keys = true
+  options.values = false
+  options.keyAsBuffer = true
+  options.valueAsBuffer = true
+
+  var iterator = this._iterator(options)
+  var emptyOptions = {}
+  var self = this
+
+  var next = function (err) {
+    if (err) {
+      return iterator.end(function () {
+        callback(err)
+      })
+    }
+
+    iterator.next(function (err, key) {
+      if (err) return next(err)
+      if (key === undefined) return iterator.end(callback)
+
+      // This could be optimized by using a batch, but the default _clear
+      // is not meant to be fast. Implementations have more room to optimize
+      // if they override _clear. Note: using _del bypasses key serialization.
+      self._del(key, emptyOptions, next)
+    })
+  }
+
+  next()
+}
+
+AbstractLevelDOWN.prototype._setupIteratorOptions = function (options) {
+  options = cleanRangeOptions(this, options)
+
+  options.reverse = !!options.reverse
+  options.keys = options.keys !== false
+  options.values = options.values !== false
+  options.limit = 'limit' in options ? options.limit : -1
+  options.keyAsBuffer = options.keyAsBuffer !== false
+  options.valueAsBuffer = options.valueAsBuffer !== false
+
+  return options
+}
+
+function cleanRangeOptions (db, options) {
+  var result = {}
+
+  for (var k in options) {
+    if (!hasOwnProperty.call(options, k)) continue
+
+    var opt = options[k]
+
+    if (isRangeOption(k)) {
+      // Note that we don't reject nullish and empty options here. While
+      // those types are invalid as keys, they are valid as range options.
+      opt = db._serializeKey(opt)
+    }
+
+    result[k] = opt
+  }
+
+  return result
+}
+
+function isRangeOption (k) {
+  return rangeOptions.indexOf(k) !== -1
+}
+
+AbstractLevelDOWN.prototype.iterator = function (options) {
+  if (typeof options !== 'object' || options === null) options = {}
+  options = this._setupIteratorOptions(options)
+  return this._iterator(options)
+}
+
+AbstractLevelDOWN.prototype._iterator = function (options) {
+  return new AbstractIterator(this)
+}
+
+AbstractLevelDOWN.prototype._chainedBatch = function () {
+  return new AbstractChainedBatch(this)
+}
+
+AbstractLevelDOWN.prototype._serializeKey = function (key) {
+  return key
+}
+
+AbstractLevelDOWN.prototype._serializeValue = function (value) {
+  return value
+}
+
+AbstractLevelDOWN.prototype._checkKey = function (key) {
+  if (key === null || key === undefined) {
+    return new Error('key cannot be `null` or `undefined`')
+  } else if (Buffer.isBuffer(key) && key.length === 0) {
+    return new Error('key cannot be an empty Buffer')
+  } else if (key === '') {
+    return new Error('key cannot be an empty String')
+  } else if (Array.isArray(key) && key.length === 0) {
+    return new Error('key cannot be an empty Array')
+  }
+}
+
+AbstractLevelDOWN.prototype._checkValue = function (value) {
+  if (value === null || value === undefined) {
+    return new Error('value cannot be `null` or `undefined`')
+  }
+}
+
+module.exports = AbstractLevelDOWN
+
+/* WEBPACK VAR INJECTION */}.call(this, __webpack_require__(/*! ./../../../process/browser.js */ "./node_modules/process/browser.js"), __webpack_require__(/*! ./../../../buffer/index.js */ "./node_modules/buffer/index.js").Buffer))
+
+/***/ }),
+
+/***/ "./node_modules/encoding-down/node_modules/abstract-leveldown/index.js":
+/*!*****************************************************************************!*\
+  !*** ./node_modules/encoding-down/node_modules/abstract-leveldown/index.js ***!
+  \*****************************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+exports.AbstractLevelDOWN = __webpack_require__(/*! ./abstract-leveldown */ "./node_modules/encoding-down/node_modules/abstract-leveldown/abstract-leveldown.js")
+exports.AbstractIterator = __webpack_require__(/*! ./abstract-iterator */ "./node_modules/encoding-down/node_modules/abstract-leveldown/abstract-iterator.js")
+exports.AbstractChainedBatch = __webpack_require__(/*! ./abstract-chained-batch */ "./node_modules/encoding-down/node_modules/abstract-leveldown/abstract-chained-batch.js")
 
 
 /***/ }),
@@ -7177,12 +8254,6 @@ function isBinary (data) {
 /*! no static exports found */
 /***/ (function(module, exports, __webpack_require__) {
 
-/* Copyright (c) 2012-2017 LevelUP contributors
- * See list at <https://github.com/rvagg/node-levelup#contributing>
- * MIT License
- * <https://github.com/rvagg/node-levelup/blob/master/LICENSE.md>
- */
-
 var createError = __webpack_require__(/*! errno */ "./node_modules/errno/errno.js").create
 var LevelUPError = createError('LevelUPError')
 var NotFoundError = createError('NotFoundError', LevelUPError)
@@ -7210,9 +8281,9 @@ module.exports = {
 /*! no static exports found */
 /***/ (function(module, exports, __webpack_require__) {
 
-var inherits = __webpack_require__(/*! inherits */ "./node_modules/inherits/inherits_browser.js")
+var inherits = __webpack_require__(/*! inherits */ "./node_modules/level-iterator-stream/node_modules/inherits/inherits_browser.js")
 var Readable = __webpack_require__(/*! readable-stream */ "./node_modules/readable-stream/readable-browser.js").Readable
-var extend = __webpack_require__(/*! xtend */ "./node_modules/xtend/immutable.js")
+var extend = __webpack_require__(/*! xtend */ "./node_modules/level-iterator-stream/node_modules/xtend/immutable.js")
 
 module.exports = ReadStream
 inherits(ReadStream, Readable)
@@ -7253,6 +8324,74 @@ ReadStream.prototype._destroy = function (err, callback) {
   this._iterator.end(function (err2) {
     callback(err || err2)
   })
+}
+
+
+/***/ }),
+
+/***/ "./node_modules/level-iterator-stream/node_modules/inherits/inherits_browser.js":
+/*!**************************************************************************************!*\
+  !*** ./node_modules/level-iterator-stream/node_modules/inherits/inherits_browser.js ***!
+  \**************************************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports) {
+
+if (typeof Object.create === 'function') {
+  // implementation from standard node.js 'util' module
+  module.exports = function inherits(ctor, superCtor) {
+    if (superCtor) {
+      ctor.super_ = superCtor
+      ctor.prototype = Object.create(superCtor.prototype, {
+        constructor: {
+          value: ctor,
+          enumerable: false,
+          writable: true,
+          configurable: true
+        }
+      })
+    }
+  };
+} else {
+  // old school shim for old browsers
+  module.exports = function inherits(ctor, superCtor) {
+    if (superCtor) {
+      ctor.super_ = superCtor
+      var TempCtor = function () {}
+      TempCtor.prototype = superCtor.prototype
+      ctor.prototype = new TempCtor()
+      ctor.prototype.constructor = ctor
+    }
+  }
+}
+
+
+/***/ }),
+
+/***/ "./node_modules/level-iterator-stream/node_modules/xtend/immutable.js":
+/*!****************************************************************************!*\
+  !*** ./node_modules/level-iterator-stream/node_modules/xtend/immutable.js ***!
+  \****************************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports) {
+
+module.exports = extend
+
+var hasOwnProperty = Object.prototype.hasOwnProperty;
+
+function extend() {
+    var target = {}
+
+    for (var i = 0; i < arguments.length; i++) {
+        var source = arguments[i]
+
+        for (var key in source) {
+            if (hasOwnProperty.call(source, key)) {
+                target[key] = source[key]
+            }
+        }
+    }
+
+    return target
 }
 
 
@@ -7760,6 +8899,111 @@ module.exports = packager
 
 /***/ }),
 
+/***/ "./node_modules/level-supports/index.js":
+/*!**********************************************!*\
+  !*** ./node_modules/level-supports/index.js ***!
+  \**********************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+// For (old) browser support
+var xtend = __webpack_require__(/*! xtend */ "./node_modules/level-supports/node_modules/xtend/immutable.js")
+var assign = __webpack_require__(/*! xtend/mutable */ "./node_modules/level-supports/node_modules/xtend/mutable.js")
+
+module.exports = function supports () {
+  var manifest = xtend.apply(null, arguments)
+
+  return assign(manifest, {
+    // Features of abstract-leveldown
+    bufferKeys: manifest.bufferKeys || false,
+    snapshots: manifest.snapshots || false,
+    permanence: manifest.permanence || false,
+    seek: manifest.seek || false,
+    clear: manifest.clear || false,
+
+    // Features of abstract-leveldown that levelup doesn't have
+    status: manifest.status || false,
+
+    // Features of disk-based implementations
+    createIfMissing: manifest.createIfMissing || false,
+    errorIfExists: manifest.errorIfExists || false,
+
+    // Features of level(up) that abstract-leveldown doesn't have yet
+    deferredOpen: manifest.deferredOpen || false,
+    openCallback: manifest.openCallback || false,
+    promises: manifest.promises || false,
+    streams: manifest.streams || false,
+    encodings: manifest.encodings || false,
+
+    // Methods that are not part of abstract-leveldown or levelup
+    additionalMethods: xtend(manifest.additionalMethods)
+  })
+}
+
+
+/***/ }),
+
+/***/ "./node_modules/level-supports/node_modules/xtend/immutable.js":
+/*!*********************************************************************!*\
+  !*** ./node_modules/level-supports/node_modules/xtend/immutable.js ***!
+  \*********************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports) {
+
+module.exports = extend
+
+var hasOwnProperty = Object.prototype.hasOwnProperty;
+
+function extend() {
+    var target = {}
+
+    for (var i = 0; i < arguments.length; i++) {
+        var source = arguments[i]
+
+        for (var key in source) {
+            if (hasOwnProperty.call(source, key)) {
+                target[key] = source[key]
+            }
+        }
+    }
+
+    return target
+}
+
+
+/***/ }),
+
+/***/ "./node_modules/level-supports/node_modules/xtend/mutable.js":
+/*!*******************************************************************!*\
+  !*** ./node_modules/level-supports/node_modules/xtend/mutable.js ***!
+  \*******************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports) {
+
+module.exports = extend
+
+var hasOwnProperty = Object.prototype.hasOwnProperty;
+
+function extend(target) {
+    for (var i = 1; i < arguments.length; i++) {
+        var source = arguments[i]
+
+        for (var key in source) {
+            if (hasOwnProperty.call(source, key)) {
+                target[key] = source[key]
+            }
+        }
+    }
+
+    return target
+}
+
+
+/***/ }),
+
 /***/ "./node_modules/level/browser.js":
 /*!***************************************!*\
   !*** ./node_modules/level/browser.js ***!
@@ -7894,6 +9138,7 @@ var DeferredLevelDOWN = __webpack_require__(/*! deferred-leveldown */ "./node_mo
 var IteratorStream = __webpack_require__(/*! level-iterator-stream */ "./node_modules/level-iterator-stream/index.js")
 var Batch = __webpack_require__(/*! ./batch */ "./node_modules/levelup/lib/batch.js")
 var errors = __webpack_require__(/*! level-errors */ "./node_modules/level-errors/errors.js")
+var supports = __webpack_require__(/*! level-supports */ "./node_modules/level-supports/index.js")
 var assert = __webpack_require__(/*! assert */ "./node_modules/assert/assert.js")
 var promisify = __webpack_require__(/*! ./promisify */ "./node_modules/levelup/lib/promisify.js")
 var getCallback = __webpack_require__(/*! ./common */ "./node_modules/levelup/lib/common.js").getCallback
@@ -7919,6 +9164,7 @@ function LevelUP (db, options, callback) {
   }
 
   var error
+  var self = this
 
   EventEmitter.call(this)
   this.setMaxListeners(Infinity)
@@ -7943,20 +9189,50 @@ function LevelUP (db, options, callback) {
   this.options = getOptions(options)
   this._db = db
   this.db = new DeferredLevelDOWN(db)
-  this.open(callback)
+  this.open(callback || function (err) {
+    if (err) self.emit('error', err)
+  })
+
+  // Create manifest based on deferred-leveldown's
+  this.supports = supports(this.db.supports, {
+    status: false,
+    deferredOpen: true,
+    openCallback: true,
+    promises: true,
+    streams: true
+  })
+
+  // Experimental: enrich levelup interface
+  Object.keys(this.supports.additionalMethods).forEach(function (method) {
+    if (this[method] != null) return
+
+    // Don't do this.db[method].bind() because this.db is dynamic.
+    this[method] = function () {
+      return this.db[method].apply(this.db, arguments)
+    }
+  }, this)
 }
 
 LevelUP.prototype.emit = EventEmitter.prototype.emit
 LevelUP.prototype.once = EventEmitter.prototype.once
 inherits(LevelUP, EventEmitter)
 
-LevelUP.prototype.open = function (callback) {
+LevelUP.prototype.open = function (opts, callback) {
   var self = this
   var promise
+
+  if (typeof opts === 'function') {
+    callback = opts
+    opts = null
+  }
 
   if (!callback) {
     callback = promisify()
     promise = callback.promise
+  }
+
+  if (!opts) {
+    opts = this.options
   }
 
   if (this.isOpen()) {
@@ -7971,7 +9247,7 @@ LevelUP.prototype.open = function (callback) {
 
   this.emit('opening')
 
-  this.db.open(this.options, function (err) {
+  this.db.open(opts, function (err) {
     if (err) {
       return callback(new OpenError(err))
     }
@@ -8156,6 +9432,33 @@ LevelUP.prototype.iterator = function (options) {
   return this.db.iterator(options)
 }
 
+LevelUP.prototype.clear = function (options, callback) {
+  var self = this
+  var promise
+
+  callback = getCallback(options, callback)
+  options = getOptions(options)
+
+  if (!callback) {
+    callback = promisify()
+    promise = callback.promise
+  }
+
+  if (maybeError(this, callback)) {
+    return promise
+  }
+
+  this.db.clear(options, function (err) {
+    if (err) {
+      return callback(new WriteError(err))
+    }
+    self.emit('clear', options)
+    callback()
+  })
+
+  return promise
+}
+
 LevelUP.prototype.readStream =
 LevelUP.prototype.createReadStream = function (options) {
   options = extend({ keys: true, values: true }, options)
@@ -8176,6 +9479,8 @@ LevelUP.prototype.createValueStream = function (options) {
 LevelUP.prototype.toString = function () {
   return 'LevelUP'
 }
+
+LevelUP.prototype.type = 'levelup'
 
 function maybeError (db, callback) {
   if (!db._isOpening() && !db.isOpen()) {
@@ -8416,12 +9721,14 @@ var AbstractLevelDOWN = __webpack_require__(/*! abstract-leveldown */ "./node_mo
 var AbstractIterator = __webpack_require__(/*! abstract-leveldown */ "./node_modules/memdown/node_modules/abstract-leveldown/index.js").AbstractIterator
 var ltgt = __webpack_require__(/*! ltgt */ "./node_modules/ltgt/index.js")
 var createRBT = __webpack_require__(/*! functional-red-black-tree */ "./node_modules/functional-red-black-tree/rbtree.js")
-var Buffer = __webpack_require__(/*! safe-buffer */ "./node_modules/safe-buffer/index.js").Buffer
+var Buffer = __webpack_require__(/*! safe-buffer */ "./node_modules/memdown/node_modules/safe-buffer/index.js").Buffer
 
 // In Node, use global.setImmediate. In the browser, use a consistent
 // microtask library to give consistent microtask experience to all browsers
 var setImmediate = __webpack_require__(/*! ./immediate */ "./node_modules/memdown/immediate-browser.js")
+var NONE = {}
 
+// TODO (perf): replace ltgt.compare with a simpler, buffer-only comparator
 function gt (value) {
   return ltgt.compare(value, this._upperBound) > 0
 }
@@ -8454,10 +9761,10 @@ function MemIterator (db, options) {
 
   if (!this._reverse) {
     this._incr = 'next'
-    this._lowerBound = ltgt.lowerBound(options)
-    this._upperBound = ltgt.upperBound(options)
+    this._lowerBound = ltgt.lowerBound(options, NONE)
+    this._upperBound = ltgt.upperBound(options, NONE)
 
-    if (typeof this._lowerBound === 'undefined') {
+    if (this._lowerBound === NONE) {
       this._tree = tree.begin
     } else if (ltgt.lowerBoundInclusive(options)) {
       this._tree = tree.ge(this._lowerBound)
@@ -8465,7 +9772,7 @@ function MemIterator (db, options) {
       this._tree = tree.gt(this._lowerBound)
     }
 
-    if (this._upperBound) {
+    if (this._upperBound !== NONE) {
       if (ltgt.upperBoundInclusive(options)) {
         this._test = lte
       } else {
@@ -8474,10 +9781,10 @@ function MemIterator (db, options) {
     }
   } else {
     this._incr = 'prev'
-    this._lowerBound = ltgt.upperBound(options)
-    this._upperBound = ltgt.lowerBound(options)
+    this._lowerBound = ltgt.upperBound(options, NONE)
+    this._upperBound = ltgt.lowerBound(options, NONE)
 
-    if (typeof this._lowerBound === 'undefined') {
+    if (this._lowerBound === NONE) {
       this._tree = tree.end
     } else if (ltgt.upperBoundInclusive(options)) {
       this._tree = tree.le(this._lowerBound)
@@ -8485,7 +9792,7 @@ function MemIterator (db, options) {
       this._tree = tree.lt(this._lowerBound)
     }
 
-    if (this._upperBound) {
+    if (this._upperBound !== NONE) {
       if (ltgt.lowerBoundInclusive(options)) {
         this._test = gte
       } else {
@@ -8509,12 +9816,12 @@ MemIterator.prototype._next = function (callback) {
 
   if (!this._test(key)) return setImmediate(callback)
 
-  if (this.keyAsBuffer && !Buffer.isBuffer(key)) {
-    key = Buffer.from(String(key))
+  if (!this.keyAsBuffer) {
+    key = key.toString()
   }
 
-  if (this.valueAsBuffer && !Buffer.isBuffer(value)) {
-    value = Buffer.from(String(value))
+  if (!this.valueAsBuffer) {
+    value = value.toString()
   }
 
   this._tree[this._incr]()
@@ -8528,10 +9835,51 @@ MemIterator.prototype._test = function () {
   return true
 }
 
+MemIterator.prototype._outOfRange = function (target) {
+  if (!this._test(target)) {
+    return true
+  } else if (this._lowerBound === NONE) {
+    return false
+  } else if (!this._reverse) {
+    if (ltgt.lowerBoundInclusive(this._options)) {
+      return ltgt.compare(target, this._lowerBound) < 0
+    } else {
+      return ltgt.compare(target, this._lowerBound) <= 0
+    }
+  } else {
+    if (ltgt.upperBoundInclusive(this._options)) {
+      return ltgt.compare(target, this._lowerBound) > 0
+    } else {
+      return ltgt.compare(target, this._lowerBound) >= 0
+    }
+  }
+}
+
+MemIterator.prototype._seek = function (target) {
+  if (target.length === 0) {
+    throw new Error('cannot seek() to an empty target')
+  }
+
+  if (this._outOfRange(target)) {
+    this._tree = this.db._store.end
+    this._tree.next()
+  } else if (this._reverse) {
+    this._tree = this.db._store.le(target)
+  } else {
+    this._tree = this.db._store.ge(target)
+  }
+}
+
 function MemDOWN () {
   if (!(this instanceof MemDOWN)) return new MemDOWN()
 
-  AbstractLevelDOWN.call(this, '')
+  AbstractLevelDOWN.call(this, {
+    bufferKeys: true,
+    snapshots: true,
+    permanence: false,
+    seek: true,
+    clear: true
+  })
 
   this._store = createRBT(ltgt.compare)
 }
@@ -8546,11 +9894,11 @@ MemDOWN.prototype._open = function (options, callback) {
 }
 
 MemDOWN.prototype._serializeKey = function (key) {
-  return key
+  return Buffer.isBuffer(key) ? key : Buffer.from(String(key))
 }
 
 MemDOWN.prototype._serializeValue = function (value) {
-  return value == null ? '' : value
+  return Buffer.isBuffer(value) ? value : Buffer.from(String(value))
 }
 
 MemDOWN.prototype._put = function (key, value, options, callback) {
@@ -8575,8 +9923,8 @@ MemDOWN.prototype._get = function (key, options, callback) {
     })
   }
 
-  if (options.asBuffer !== false && !Buffer.isBuffer(value)) {
-    value = Buffer.from(String(value))
+  if (!options.asBuffer) {
+    value = value.toString()
   }
 
   setImmediate(function callNext () {
@@ -8619,6 +9967,8 @@ MemDOWN.prototype._iterator = function (options) {
 }
 
 module.exports = MemDOWN.default = MemDOWN
+// Exposed for unit tests only
+module.exports.MemIterator = MemIterator
 
 
 /***/ }),
@@ -8628,22 +9978,16 @@ module.exports = MemDOWN.default = MemDOWN
   !*** ./node_modules/memdown/node_modules/abstract-leveldown/abstract-chained-batch.js ***!
   \****************************************************************************************/
 /*! no static exports found */
-/***/ (function(module, exports, __webpack_require__) {
-
-/* WEBPACK VAR INJECTION */(function(process) {/* Copyright (c) 2017 Rod Vagg, MIT License */
+/***/ (function(module, exports) {
 
 function AbstractChainedBatch (db) {
-  this._db = db
+  if (typeof db !== 'object' || db === null) {
+    throw new TypeError('First argument must be an abstract-leveldown compliant store')
+  }
+
+  this.db = db
   this._operations = []
   this._written = false
-}
-
-AbstractChainedBatch.prototype._serializeKey = function (key) {
-  return this._db._serializeKey(key)
-}
-
-AbstractChainedBatch.prototype._serializeValue = function (value) {
-  return this._db._serializeValue(value)
 }
 
 AbstractChainedBatch.prototype._checkWritten = function () {
@@ -8655,11 +9999,11 @@ AbstractChainedBatch.prototype._checkWritten = function () {
 AbstractChainedBatch.prototype.put = function (key, value) {
   this._checkWritten()
 
-  var err = this._db._checkKey(key, 'key')
-  if (err) { throw err }
+  var err = this.db._checkKey(key) || this.db._checkValue(value)
+  if (err) throw err
 
-  key = this._serializeKey(key)
-  value = this._serializeValue(value)
+  key = this.db._serializeKey(key)
+  value = this.db._serializeValue(value)
 
   this._put(key, value)
 
@@ -8673,10 +10017,10 @@ AbstractChainedBatch.prototype._put = function (key, value) {
 AbstractChainedBatch.prototype.del = function (key) {
   this._checkWritten()
 
-  var err = this._db._checkKey(key, 'key')
-  if (err) { throw err }
+  var err = this.db._checkKey(key)
+  if (err) throw err
 
-  key = this._serializeKey(key)
+  key = this.db._serializeKey(key)
   this._del(key)
 
   return this
@@ -8688,13 +10032,14 @@ AbstractChainedBatch.prototype._del = function (key) {
 
 AbstractChainedBatch.prototype.clear = function () {
   this._checkWritten()
-  this._operations = []
   this._clear()
 
   return this
 }
 
-AbstractChainedBatch.prototype._clear = function noop () {}
+AbstractChainedBatch.prototype._clear = function () {
+  this._operations = []
+}
 
 AbstractChainedBatch.prototype.write = function (options, callback) {
   this._checkWritten()
@@ -8703,23 +10048,20 @@ AbstractChainedBatch.prototype.write = function (options, callback) {
   if (typeof callback !== 'function') {
     throw new Error('write() requires a callback argument')
   }
-  if (typeof options !== 'object') { options = {} }
-
-  this._written = true
-
-  // @ts-ignore
-  if (typeof this._write === 'function') { return this._write(callback) }
-
-  if (typeof this._db._batch === 'function') {
-    return this._db._batch(this._operations, options, callback)
+  if (typeof options !== 'object' || options === null) {
+    options = {}
   }
 
-  process.nextTick(callback)
+  this._written = true
+  this._write(options, callback)
+}
+
+AbstractChainedBatch.prototype._write = function (options, callback) {
+  this.db._batch(this._operations, options, callback)
 }
 
 module.exports = AbstractChainedBatch
 
-/* WEBPACK VAR INJECTION */}.call(this, __webpack_require__(/*! ./../../../process/browser.js */ "./node_modules/process/browser.js")))
 
 /***/ }),
 
@@ -8730,9 +10072,11 @@ module.exports = AbstractChainedBatch
 /*! no static exports found */
 /***/ (function(module, exports, __webpack_require__) {
 
-/* WEBPACK VAR INJECTION */(function(process) {/* Copyright (c) 2017 Rod Vagg, MIT License */
+/* WEBPACK VAR INJECTION */(function(process) {function AbstractIterator (db) {
+  if (typeof db !== 'object' || db === null) {
+    throw new TypeError('First argument must be an abstract-leveldown compliant store')
+  }
 
-function AbstractIterator (db) {
   this.db = db
   this._ended = false
   this._nexting = false
@@ -8768,6 +10112,20 @@ AbstractIterator.prototype._next = function (callback) {
   process.nextTick(callback)
 }
 
+AbstractIterator.prototype.seek = function (target) {
+  if (this._ended) {
+    throw new Error('cannot call seek() after end()')
+  }
+  if (this._nexting) {
+    throw new Error('cannot call seek() before next() has completed')
+  }
+
+  target = this.db._serializeKey(target)
+  this._seek(target)
+}
+
+AbstractIterator.prototype._seek = function (target) {}
+
 AbstractIterator.prototype.end = function (callback) {
   if (typeof callback !== 'function') {
     throw new Error('end() requires a callback argument')
@@ -8798,38 +10156,33 @@ module.exports = AbstractIterator
 /*! no static exports found */
 /***/ (function(module, exports, __webpack_require__) {
 
-/* WEBPACK VAR INJECTION */(function(process, Buffer) {/* Copyright (c) 2017 Rod Vagg, MIT License */
-
-var xtend = __webpack_require__(/*! xtend */ "./node_modules/xtend/immutable.js")
+/* WEBPACK VAR INJECTION */(function(process, Buffer) {var xtend = __webpack_require__(/*! xtend */ "./node_modules/xtend/immutable.js")
+var supports = __webpack_require__(/*! level-supports */ "./node_modules/level-supports/index.js")
 var AbstractIterator = __webpack_require__(/*! ./abstract-iterator */ "./node_modules/memdown/node_modules/abstract-leveldown/abstract-iterator.js")
 var AbstractChainedBatch = __webpack_require__(/*! ./abstract-chained-batch */ "./node_modules/memdown/node_modules/abstract-leveldown/abstract-chained-batch.js")
 var hasOwnProperty = Object.prototype.hasOwnProperty
 var rangeOptions = 'start end gt gte lt lte'.split(' ')
 
-function AbstractLevelDOWN (location) {
-  if (!arguments.length || location === undefined) {
-    throw new Error('constructor requires at least a location argument')
-  }
-
-  if (typeof location !== 'string') {
-    throw new Error('constructor requires a location string argument')
-  }
-
-  this.location = location
+function AbstractLevelDOWN (manifest) {
   this.status = 'new'
+
+  // TODO (next major): make this mandatory
+  this.supports = supports(manifest, {
+    status: true
+  })
 }
 
 AbstractLevelDOWN.prototype.open = function (options, callback) {
   var self = this
   var oldStatus = this.status
 
-  if (typeof options === 'function') { callback = options }
+  if (typeof options === 'function') callback = options
 
   if (typeof callback !== 'function') {
     throw new Error('open() requires a callback argument')
   }
 
-  if (typeof options !== 'object') { options = {} }
+  if (typeof options !== 'object' || options === null) options = {}
 
   options.createIfMissing = options.createIfMissing !== false
   options.errorIfExists = !!options.errorIfExists
@@ -8873,18 +10226,18 @@ AbstractLevelDOWN.prototype._close = function (callback) {
 }
 
 AbstractLevelDOWN.prototype.get = function (key, options, callback) {
-  if (typeof options === 'function') { callback = options }
+  if (typeof options === 'function') callback = options
 
   if (typeof callback !== 'function') {
     throw new Error('get() requires a callback argument')
   }
 
-  var err = this._checkKey(key, 'key')
+  var err = this._checkKey(key)
   if (err) return process.nextTick(callback, err)
 
   key = this._serializeKey(key)
 
-  if (typeof options !== 'object') { options = {} }
+  if (typeof options !== 'object' || options === null) options = {}
 
   options.asBuffer = options.asBuffer !== false
 
@@ -8896,19 +10249,19 @@ AbstractLevelDOWN.prototype._get = function (key, options, callback) {
 }
 
 AbstractLevelDOWN.prototype.put = function (key, value, options, callback) {
-  if (typeof options === 'function') { callback = options }
+  if (typeof options === 'function') callback = options
 
   if (typeof callback !== 'function') {
     throw new Error('put() requires a callback argument')
   }
 
-  var err = this._checkKey(key, 'key')
+  var err = this._checkKey(key) || this._checkValue(value)
   if (err) return process.nextTick(callback, err)
 
   key = this._serializeKey(key)
   value = this._serializeValue(value)
 
-  if (typeof options !== 'object') { options = {} }
+  if (typeof options !== 'object' || options === null) options = {}
 
   this._put(key, value, options, callback)
 }
@@ -8918,18 +10271,18 @@ AbstractLevelDOWN.prototype._put = function (key, value, options, callback) {
 }
 
 AbstractLevelDOWN.prototype.del = function (key, options, callback) {
-  if (typeof options === 'function') { callback = options }
+  if (typeof options === 'function') callback = options
 
   if (typeof callback !== 'function') {
     throw new Error('del() requires a callback argument')
   }
 
-  var err = this._checkKey(key, 'key')
+  var err = this._checkKey(key)
   if (err) return process.nextTick(callback, err)
 
   key = this._serializeKey(key)
 
-  if (typeof options !== 'object') { options = {} }
+  if (typeof options !== 'object' || options === null) options = {}
 
   this._del(key, options, callback)
 }
@@ -8939,11 +10292,11 @@ AbstractLevelDOWN.prototype._del = function (key, options, callback) {
 }
 
 AbstractLevelDOWN.prototype.batch = function (array, options, callback) {
-  if (!arguments.length) { return this._chainedBatch() }
+  if (!arguments.length) return this._chainedBatch()
 
-  if (typeof options === 'function') { callback = options }
+  if (typeof options === 'function') callback = options
 
-  if (typeof array === 'function') { callback = array }
+  if (typeof array === 'function') callback = array
 
   if (typeof callback !== 'function') {
     throw new Error('batch(array) requires a callback argument')
@@ -8953,7 +10306,11 @@ AbstractLevelDOWN.prototype.batch = function (array, options, callback) {
     return process.nextTick(callback, new Error('batch(array) requires an array argument'))
   }
 
-  if (!options || typeof options !== 'object') { options = {} }
+  if (array.length === 0) {
+    return process.nextTick(callback)
+  }
+
+  if (typeof options !== 'object' || options === null) options = {}
 
   var serialized = new Array(array.length)
 
@@ -8968,12 +10325,17 @@ AbstractLevelDOWN.prototype.batch = function (array, options, callback) {
       return process.nextTick(callback, new Error("`type` must be 'put' or 'del'"))
     }
 
-    var err = this._checkKey(e.key, 'key')
+    var err = this._checkKey(e.key)
     if (err) return process.nextTick(callback, err)
 
     e.key = this._serializeKey(e.key)
 
-    if (e.type === 'put') { e.value = this._serializeValue(e.value) }
+    if (e.type === 'put') {
+      var valueErr = this._checkValue(e.value)
+      if (valueErr) return process.nextTick(callback, valueErr)
+
+      e.value = this._serializeValue(e.value)
+    }
 
     serialized[i] = e
   }
@@ -8985,8 +10347,54 @@ AbstractLevelDOWN.prototype._batch = function (array, options, callback) {
   process.nextTick(callback)
 }
 
+AbstractLevelDOWN.prototype.clear = function (options, callback) {
+  if (typeof options === 'function') {
+    callback = options
+  } else if (typeof callback !== 'function') {
+    throw new Error('clear() requires a callback argument')
+  }
+
+  options = cleanRangeOptions(this, options)
+  options.reverse = !!options.reverse
+  options.limit = 'limit' in options ? options.limit : -1
+
+  this._clear(options, callback)
+}
+
+AbstractLevelDOWN.prototype._clear = function (options, callback) {
+  // Avoid setupIteratorOptions, would serialize range options a second time.
+  options.keys = true
+  options.values = false
+  options.keyAsBuffer = true
+  options.valueAsBuffer = true
+
+  var iterator = this._iterator(options)
+  var emptyOptions = {}
+  var self = this
+
+  var next = function (err) {
+    if (err) {
+      return iterator.end(function () {
+        callback(err)
+      })
+    }
+
+    iterator.next(function (err, key) {
+      if (err) return next(err)
+      if (key === undefined) return iterator.end(callback)
+
+      // This could be optimized by using a batch, but the default _clear
+      // is not meant to be fast. Implementations have more room to optimize
+      // if they override _clear. Note: using _del bypasses key serialization.
+      self._del(key, emptyOptions, next)
+    })
+  }
+
+  next()
+}
+
 AbstractLevelDOWN.prototype._setupIteratorOptions = function (options) {
-  options = cleanRangeOptions(options)
+  options = cleanRangeOptions(this, options)
 
   options.reverse = !!options.reverse
   options.keys = options.keys !== false
@@ -8998,14 +10406,21 @@ AbstractLevelDOWN.prototype._setupIteratorOptions = function (options) {
   return options
 }
 
-function cleanRangeOptions (options) {
+function cleanRangeOptions (db, options) {
   var result = {}
 
   for (var k in options) {
     if (!hasOwnProperty.call(options, k)) continue
-    if (isRangeOption(k) && isEmptyRangeOption(options[k])) continue
 
-    result[k] = options[k]
+    var opt = options[k]
+
+    if (isRangeOption(k)) {
+      // Note that we don't reject nullish and empty options here. While
+      // those types are invalid as keys, they are valid as range options.
+      opt = db._serializeKey(opt)
+    }
+
+    result[k] = opt
   }
 
   return result
@@ -9015,16 +10430,8 @@ function isRangeOption (k) {
   return rangeOptions.indexOf(k) !== -1
 }
 
-function isEmptyRangeOption (v) {
-  return v === '' || v == null || isEmptyBuffer(v)
-}
-
-function isEmptyBuffer (v) {
-  return Buffer.isBuffer(v) && v.length === 0
-}
-
 AbstractLevelDOWN.prototype.iterator = function (options) {
-  if (typeof options !== 'object') { options = {} }
+  if (typeof options !== 'object' || options === null) options = {}
   options = this._setupIteratorOptions(options)
   return this._iterator(options)
 }
@@ -9038,25 +10445,28 @@ AbstractLevelDOWN.prototype._chainedBatch = function () {
 }
 
 AbstractLevelDOWN.prototype._serializeKey = function (key) {
-  return Buffer.isBuffer(key) ? key : String(key)
+  return key
 }
 
 AbstractLevelDOWN.prototype._serializeValue = function (value) {
-  if (value == null) return ''
-  return Buffer.isBuffer(value) || process.browser ? value : String(value)
+  return value
 }
 
-AbstractLevelDOWN.prototype._checkKey = function (obj, type) {
-  if (obj === null || obj === undefined) {
-    return new Error(type + ' cannot be `null` or `undefined`')
+AbstractLevelDOWN.prototype._checkKey = function (key) {
+  if (key === null || key === undefined) {
+    return new Error('key cannot be `null` or `undefined`')
+  } else if (Buffer.isBuffer(key) && key.length === 0) {
+    return new Error('key cannot be an empty Buffer')
+  } else if (key === '') {
+    return new Error('key cannot be an empty String')
+  } else if (Array.isArray(key) && key.length === 0) {
+    return new Error('key cannot be an empty Array')
   }
+}
 
-  if (Buffer.isBuffer(obj) && obj.length === 0) {
-    return new Error(type + ' cannot be an empty Buffer')
-  }
-
-  if (String(obj) === '') {
-    return new Error(type + ' cannot be an empty String')
+AbstractLevelDOWN.prototype._checkValue = function (value) {
+  if (value === null || value === undefined) {
+    return new Error('value cannot be `null` or `undefined`')
   }
 }
 
@@ -9076,6 +10486,81 @@ module.exports = AbstractLevelDOWN
 exports.AbstractLevelDOWN = __webpack_require__(/*! ./abstract-leveldown */ "./node_modules/memdown/node_modules/abstract-leveldown/abstract-leveldown.js")
 exports.AbstractIterator = __webpack_require__(/*! ./abstract-iterator */ "./node_modules/memdown/node_modules/abstract-leveldown/abstract-iterator.js")
 exports.AbstractChainedBatch = __webpack_require__(/*! ./abstract-chained-batch */ "./node_modules/memdown/node_modules/abstract-leveldown/abstract-chained-batch.js")
+
+
+/***/ }),
+
+/***/ "./node_modules/memdown/node_modules/safe-buffer/index.js":
+/*!****************************************************************!*\
+  !*** ./node_modules/memdown/node_modules/safe-buffer/index.js ***!
+  \****************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+/* eslint-disable node/no-deprecated-api */
+var buffer = __webpack_require__(/*! buffer */ "./node_modules/buffer/index.js")
+var Buffer = buffer.Buffer
+
+// alternative to using Object.keys for old browsers
+function copyProps (src, dst) {
+  for (var key in src) {
+    dst[key] = src[key]
+  }
+}
+if (Buffer.from && Buffer.alloc && Buffer.allocUnsafe && Buffer.allocUnsafeSlow) {
+  module.exports = buffer
+} else {
+  // Copy properties from require('buffer')
+  copyProps(buffer, exports)
+  exports.Buffer = SafeBuffer
+}
+
+function SafeBuffer (arg, encodingOrOffset, length) {
+  return Buffer(arg, encodingOrOffset, length)
+}
+
+SafeBuffer.prototype = Object.create(Buffer.prototype)
+
+// Copy static methods from Buffer
+copyProps(Buffer, SafeBuffer)
+
+SafeBuffer.from = function (arg, encodingOrOffset, length) {
+  if (typeof arg === 'number') {
+    throw new TypeError('Argument must not be a number')
+  }
+  return Buffer(arg, encodingOrOffset, length)
+}
+
+SafeBuffer.alloc = function (size, fill, encoding) {
+  if (typeof size !== 'number') {
+    throw new TypeError('Argument must be a number')
+  }
+  var buf = Buffer(size)
+  if (fill !== undefined) {
+    if (typeof encoding === 'string') {
+      buf.fill(fill, encoding)
+    } else {
+      buf.fill(fill)
+    }
+  } else {
+    buf.fill(0)
+  }
+  return buf
+}
+
+SafeBuffer.allocUnsafe = function (size) {
+  if (typeof size !== 'number') {
+    throw new TypeError('Argument must be a number')
+  }
+  return Buffer(size)
+}
+
+SafeBuffer.allocUnsafeSlow = function (size) {
+  if (typeof size !== 'number') {
+    throw new TypeError('Argument must be a number')
+  }
+  return buffer.SlowBuffer(size)
+}
 
 
 /***/ }),
@@ -10374,13 +11859,35 @@ function maybeReadMore(stream, state) {
 }
 
 function maybeReadMore_(stream, state) {
-  var len = state.length;
-
-  while (!state.reading && !state.ended && state.length < state.highWaterMark) {
+  // Attempt to read more data if we should.
+  //
+  // The conditions for reading more data are (one of):
+  // - Not enough data buffered (state.length < state.highWaterMark). The loop
+  //   is responsible for filling the buffer with enough data if such data
+  //   is available. If highWaterMark is 0 and we are not in the flowing mode
+  //   we should _not_ attempt to buffer any extra data. We'll get more data
+  //   when the stream consumer calls read() instead.
+  // - No data in the buffer, and the stream is in flowing mode. In this mode
+  //   the loop below is responsible for ensuring read() is called. Failing to
+  //   call read here would abort the flow and there's no other mechanism for
+  //   continuing the flow if the stream consumer has just subscribed to the
+  //   'data' event.
+  //
+  // In addition to the above conditions to keep reading data, the following
+  // conditions prevent the data from being read:
+  // - The stream has ended (state.ended).
+  // - There is already a pending 'read' operation (state.reading). This is a
+  //   case where the the stream has called the implementation defined _read()
+  //   method, but they are processing the call asynchronously and have _not_
+  //   called push() with new data. In this case we skip performing more
+  //   read()s. The execution ends in this method again after the _read() ends
+  //   up calling push() with more data.
+  while (!state.reading && !state.ended && (state.length < state.highWaterMark || state.flowing && state.length === 0)) {
+    var len = state.length;
     debug('maybeReadMore read 0');
     stream.read(0);
     if (len === state.length) // didn't get any data, stop spinning.
-      break;else len = state.length;
+      break;
   }
 
   state.readingMore = false;
@@ -11861,6 +13368,11 @@ function onReadable(iter) {
 function wrapForNext(lastPromise, iter) {
   return function (resolve, reject) {
     lastPromise.then(function () {
+      if (iter[kEnded]) {
+        resolve(createIterResult(undefined, true));
+        return;
+      }
+
       iter[kHandlePromise](resolve, reject);
     }, reject);
   };
@@ -11884,7 +13396,7 @@ var ReadableStreamAsyncIteratorPrototype = Object.setPrototypeOf((_Object$setPro
     }
 
     if (this[kEnded]) {
-      return Promise.resolve(createIterResult(null, true));
+      return Promise.resolve(createIterResult(undefined, true));
     }
 
     if (this[kStream].destroyed) {
@@ -11897,7 +13409,7 @@ var ReadableStreamAsyncIteratorPrototype = Object.setPrototypeOf((_Object$setPro
           if (_this[kError]) {
             reject(_this[kError]);
           } else {
-            resolve(createIterResult(null, true));
+            resolve(createIterResult(undefined, true));
           }
         });
       });
@@ -11942,7 +13454,7 @@ var ReadableStreamAsyncIteratorPrototype = Object.setPrototypeOf((_Object$setPro
         return;
       }
 
-      resolve(createIterResult(null, true));
+      resolve(createIterResult(undefined, true));
     });
   });
 }), _Object$setPrototypeO), AsyncIteratorPrototype);
@@ -11965,9 +13477,6 @@ var createReadableStreamAsyncIterator = function createReadableStreamAsyncIterat
   }), _defineProperty(_Object$create, kEnded, {
     value: stream._readableState.endEmitted,
     writable: true
-  }), _defineProperty(_Object$create, kLastPromise, {
-    value: null,
-    writable: true
   }), _defineProperty(_Object$create, kHandlePromise, {
     value: function value(resolve, reject) {
       var data = iterator[kStream].read();
@@ -11984,6 +13493,7 @@ var createReadableStreamAsyncIterator = function createReadableStreamAsyncIterat
     },
     writable: true
   }), _Object$create));
+  iterator[kLastPromise] = null;
   finished(stream, function (err) {
     if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
       var reject = iterator[kLastReject]; // reject if we are waiting for data in the Promise
@@ -12006,7 +13516,7 @@ var createReadableStreamAsyncIterator = function createReadableStreamAsyncIterat
       iterator[kLastPromise] = null;
       iterator[kLastResolve] = null;
       iterator[kLastReject] = null;
-      resolve(createIterResult(null, true));
+      resolve(createIterResult(undefined, true));
     }
 
     iterator[kEnded] = true;
@@ -12331,27 +13841,30 @@ module.exports = {
 
 var ERR_STREAM_PREMATURE_CLOSE = __webpack_require__(/*! ../../../errors */ "./node_modules/readable-stream/errors-browser.js").codes.ERR_STREAM_PREMATURE_CLOSE;
 
+function once(callback) {
+  var called = false;
+  return function () {
+    if (called) return;
+    called = true;
+
+    for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++) {
+      args[_key] = arguments[_key];
+    }
+
+    callback.apply(this, args);
+  };
+}
+
 function noop() {}
 
 function isRequest(stream) {
   return stream.setHeader && typeof stream.abort === 'function';
 }
 
-function once(callback) {
-  var called = false;
-  return function (err) {
-    if (called) return;
-    called = true;
-    callback.call(this, err);
-  };
-}
-
 function eos(stream, opts, callback) {
   if (typeof opts === 'function') return eos(stream, null, opts);
   if (!opts) opts = {};
   callback = once(callback || noop);
-  var ws = stream._writableState;
-  var rs = stream._readableState;
   var readable = opts.readable || opts.readable !== false && stream.readable;
   var writable = opts.writable || opts.writable !== false && stream.writable;
 
@@ -12359,13 +13872,19 @@ function eos(stream, opts, callback) {
     if (!stream.writable) onfinish();
   };
 
+  var writableEnded = stream._writableState && stream._writableState.finished;
+
   var onfinish = function onfinish() {
     writable = false;
+    writableEnded = true;
     if (!readable) callback.call(stream);
   };
 
+  var readableEnded = stream._readableState && stream._readableState.endEmitted;
+
   var onend = function onend() {
     readable = false;
+    readableEnded = true;
     if (!writable) callback.call(stream);
   };
 
@@ -12374,12 +13893,16 @@ function eos(stream, opts, callback) {
   };
 
   var onclose = function onclose() {
-    if (readable && !(rs && rs.ended)) {
-      return callback.call(stream, new ERR_STREAM_PREMATURE_CLOSE());
+    var err;
+
+    if (readable && !readableEnded) {
+      if (!stream._readableState || !stream._readableState.ended) err = new ERR_STREAM_PREMATURE_CLOSE();
+      return callback.call(stream, err);
     }
 
-    if (writable && !(ws && ws.ended)) {
-      return callback.call(stream, new ERR_STREAM_PREMATURE_CLOSE());
+    if (writable && !writableEnded) {
+      if (!stream._writableState || !stream._writableState.ended) err = new ERR_STREAM_PREMATURE_CLOSE();
+      return callback.call(stream, err);
     }
   };
 
@@ -12391,7 +13914,7 @@ function eos(stream, opts, callback) {
     stream.on('complete', onfinish);
     stream.on('abort', onclose);
     if (stream.req) onrequest();else stream.on('request', onrequest);
-  } else if (writable && !ws) {
+  } else if (writable && !stream._writableState) {
     // legacy streams
     stream.on('end', onlegacyfinish);
     stream.on('close', onlegacyfinish);
@@ -12416,6 +13939,114 @@ function eos(stream, opts, callback) {
 }
 
 module.exports = eos;
+
+/***/ }),
+
+/***/ "./node_modules/readable-stream/lib/internal/streams/pipeline.js":
+/*!***********************************************************************!*\
+  !*** ./node_modules/readable-stream/lib/internal/streams/pipeline.js ***!
+  \***********************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+// Ported from https://github.com/mafintosh/pump with
+// permission from the author, Mathias Buus (@mafintosh).
+
+
+var eos;
+
+function once(callback) {
+  var called = false;
+  return function () {
+    if (called) return;
+    called = true;
+    callback.apply(void 0, arguments);
+  };
+}
+
+var _require$codes = __webpack_require__(/*! ../../../errors */ "./node_modules/readable-stream/errors-browser.js").codes,
+    ERR_MISSING_ARGS = _require$codes.ERR_MISSING_ARGS,
+    ERR_STREAM_DESTROYED = _require$codes.ERR_STREAM_DESTROYED;
+
+function noop(err) {
+  // Rethrow the error if it exists to avoid swallowing it
+  if (err) throw err;
+}
+
+function isRequest(stream) {
+  return stream.setHeader && typeof stream.abort === 'function';
+}
+
+function destroyer(stream, reading, writing, callback) {
+  callback = once(callback);
+  var closed = false;
+  stream.on('close', function () {
+    closed = true;
+  });
+  if (eos === undefined) eos = __webpack_require__(/*! ./end-of-stream */ "./node_modules/readable-stream/lib/internal/streams/end-of-stream.js");
+  eos(stream, {
+    readable: reading,
+    writable: writing
+  }, function (err) {
+    if (err) return callback(err);
+    closed = true;
+    callback();
+  });
+  var destroyed = false;
+  return function (err) {
+    if (closed) return;
+    if (destroyed) return;
+    destroyed = true; // request.destroy just do .end - .abort is what we want
+
+    if (isRequest(stream)) return stream.abort();
+    if (typeof stream.destroy === 'function') return stream.destroy();
+    callback(err || new ERR_STREAM_DESTROYED('pipe'));
+  };
+}
+
+function call(fn) {
+  fn();
+}
+
+function pipe(from, to) {
+  return from.pipe(to);
+}
+
+function popCallback(streams) {
+  if (!streams.length) return noop;
+  if (typeof streams[streams.length - 1] !== 'function') return noop;
+  return streams.pop();
+}
+
+function pipeline() {
+  for (var _len = arguments.length, streams = new Array(_len), _key = 0; _key < _len; _key++) {
+    streams[_key] = arguments[_key];
+  }
+
+  var callback = popCallback(streams);
+  if (Array.isArray(streams[0])) streams = streams[0];
+
+  if (streams.length < 2) {
+    throw new ERR_MISSING_ARGS('streams');
+  }
+
+  var error;
+  var destroys = streams.map(function (stream, i) {
+    var reading = i < streams.length - 1;
+    var writing = i > 0;
+    return destroyer(stream, reading, writing, function (err) {
+      if (!error) error = err;
+      if (err) destroys.forEach(call);
+      if (reading) return;
+      destroys.forEach(call);
+      callback(error);
+    });
+  });
+  return streams.reduce(pipe);
+}
+
+module.exports = pipeline;
 
 /***/ }),
 
@@ -12483,6 +14114,8 @@ exports.Writable = __webpack_require__(/*! ./lib/_stream_writable.js */ "./node_
 exports.Duplex = __webpack_require__(/*! ./lib/_stream_duplex.js */ "./node_modules/readable-stream/lib/_stream_duplex.js");
 exports.Transform = __webpack_require__(/*! ./lib/_stream_transform.js */ "./node_modules/readable-stream/lib/_stream_transform.js");
 exports.PassThrough = __webpack_require__(/*! ./lib/_stream_passthrough.js */ "./node_modules/readable-stream/lib/_stream_passthrough.js");
+exports.finished = __webpack_require__(/*! ./lib/internal/streams/end-of-stream.js */ "./node_modules/readable-stream/lib/internal/streams/end-of-stream.js");
+exports.pipeline = __webpack_require__(/*! ./lib/internal/streams/pipeline.js */ "./node_modules/readable-stream/lib/internal/streams/pipeline.js");
 
 
 /***/ }),
