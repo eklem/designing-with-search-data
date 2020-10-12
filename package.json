@@ -27,7 +27,7 @@
     "memdown": "^5.1.0",
     "search-index": "1.0.6",
     "webpack": "^4.44.2",
-    "webpack-cli": "^3.3.12"
+    "webpack-cli": "^4.0.0"
   },
   "author": "Espen Klem",
   "license": "MIT",
