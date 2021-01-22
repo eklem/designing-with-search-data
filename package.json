@@ -25,7 +25,7 @@
     "fergies-inverted-index": "9.2.0",
     "levelup": "^4.4.0",
     "memdown": "^5.1.0",
-    "search-index": "2.0.1",
+    "search-index": "2.1.0",
     "webpack": "^5.16.0",
     "webpack-cli": "^4.4.0"
   },
