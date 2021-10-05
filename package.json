@@ -26,7 +26,7 @@
     "levelup": "^5.0.1",
     "memdown": "^6.0.0",
     "search-index": "2.3.0",
-    "webpack": "^5.48.0",
+    "webpack": "^5.56.1",
     "webpack-cli": "^4.7.2"
   },
   "author": "Espen Klem",
