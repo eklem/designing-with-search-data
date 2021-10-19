@@ -21,7 +21,7 @@
     "search-engine"
   ],
   "dependencies": {
-    "encoding-down": "^7.0.0",
+    "encoding-down": "^7.1.0",
     "fergies-inverted-index": "9.3.1",
     "levelup": "^5.0.1",
     "memdown": "^6.0.0",
