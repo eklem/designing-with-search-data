@@ -25,7 +25,7 @@
     "fergies-inverted-index": "10.0.6",
     "levelup": "^5.1.1",
     "memdown": "^6.1.1",
-    "search-index": "3.1.1"
+    "search-index": "3.1.2"
   },
   "author": "Espen Klem",
   "license": "MIT",
