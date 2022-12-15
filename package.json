@@ -1,36 +1,16 @@
 {
   "name": "designing-with-search-data",
-  "version": "0.0.4",
-  "description": "Plugin for Adobe XD - A search engine running inside XD to easily populate your search application design. ",
-  "main": "main.js",
+  "version": "1.0.0",
+  "description": "Your Figma Plugin",
+  "main": "code.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "deploy": "npm run compile-for-XD && npm run emptyPlugin && npm run copyFiles",
-    "compile-for-XD": "webpack",
-    "emptyPlugin": "rm /Users/eklem/Library/Application\\ Support/Adobe/Adobe\\ XD/develop/dist/*",
-    "copyFiles": "cp {main.js,manifest.json,XD-webpacked.js} /Users/eklem/Library/Application\\ Support/Adobe/Adobe\\ XD/develop/dist/"
+    "build": "tsc -p tsconfig.json",
+    "watch": "npm run build -- --watch"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/eklem/designing-with-search-data.git"
-  },
-  "keywords": [
-    "designing-with-data",
-    "search",
-    "adobe-xd",
-    "search-engine"
-  ],
-  "dependencies": {
-    "encoding-down": "^7.1.0",
-    "fergies-inverted-index": "10.1.0",
-    "levelup": "^5.1.1",
-    "memdown": "^6.1.1",
-    "search-index": "3.3.0"
-  },
-  "author": "Espen Klem",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/eklem/designing-with-search-data/issues"
-  },
-  "homepage": "https://github.com/eklem/designing-with-search-data#readme"
+  "author": "",
+  "license": "",
+  "devDependencies": {
+    "@figma/plugin-typings": "*",
+    "typescript": "*"
+  }
 }

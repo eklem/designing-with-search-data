@@ -1,15 +1,10 @@
 {
-  "name" : "Design with search data",
-  "host" : {
-    "app" : "XD",
-    "minVersion" : "13.0.0"
-  },
-  "description" : "Designing with data for search applications. Running a search engine inside XD, just for you..",
-  "id" : "cd8971b2",
-  "uiEntryPoints" : [ {
-    "label" : "Populate search design",
-    "type" : "menu",
-    "commandId" : "populateSearchDesign"
-  } ],
-  "version" : "0.0.2"
+  "name": "designing-with-search-data",
+  "id": "1185153081637226274",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": [
+    "figma"
+  ],
+  "ui": "ui.html"
 }

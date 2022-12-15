@@ -1,33 +1,40 @@
-# Designing with search data
-Plugin for Adobe XD - A search engine running inside XD to easily populate your search application design.
+Below are the steps to get your plugin running. You can also find instructions at:
 
-## Concept
-Easily access the different results of a search query to populate the design. No more faking autosuggests for partial queries.
+  https://www.figma.com/plugin-docs/setup/
 
-Check out the blogpost "[Designing with search data](https://knowitlabs.no/designing-with-search-data-5c8b6b6d3fa1)".
+This plugin template uses Typescript and NPM, two standard tools in creating JavaScript applications.
 
-![A mockup of the design in use](https://cdn-images-1.medium.com/max/2000/1*IHo4akTFtxOMqhkYsTS6VQ.png)
+First, download Node.js which comes with NPM. This will allow you to install TypeScript and other
+libraries. You can find the download link here:
 
-The actual application will be a bit different, but concept will be the same. [Check out a video of how it could work](https://youtu.be/A-rr1h-sjYw).
+  https://nodejs.org/en/download/
 
-## Do you want this to happen?
-Go vote for the [Leveldb / indexeddb for apps running inside XD](https://forums.adobexdplatform.com/t/leveldb-indexeddb-for-apps-running-inside-xd/241) feature request, over at Adobe XD Plugin Developers.
+Next, install TypeScript using the command:
 
-## Patch level-js
-After `npm install`, add `var indexedDB` to ./node_modules/level-js/index.js so the start of the file is like this:
+  npm install -g typescript
 
-```JavaScript
-/* global indexedDB */
+Finally, in the directory of your plugin, get the latest type definitions for the plugin API by running:
 
-'use strict'
+  npm install --save-dev @figma/plugin-typings
 
-var indexedDB
-module.exports = Level
-```
+If you are familiar with JavaScript, TypeScript will look very familiar. In fact, valid JavaScript code
+is already valid Typescript code.
 
-## Building it
-Only working when loading the plugin (check developer console), but not in interaction with SceneGraph. That's next to fix.
+TypeScript adds type annotations to variables. This allows code editors such as Visual Studio Code
+to provide information about the Figma API while you are writing code, as well as help catch bugs
+you previously didn't notice.
 
-```console
-npm run-script deploy
-```
+For more information, visit https://www.typescriptlang.org/
+
+Using TypeScript requires a compiler to convert TypeScript (code.ts) into JavaScript (code.js)
+for the browser to run.
+
+We recommend writing TypeScript code using Visual Studio code:
+
+1. Download Visual Studio Code if you haven't already: https://code.visualstudio.com/.
+2. Open this directory in Visual Studio Code.
+3. Compile TypeScript to JavaScript: Run the "Terminal > Run Build Task..." menu item,
+    then select "npm: watch". You will have to do this again every time
+    you reopen Visual Studio Code.
+
+That's it! Visual Studio Code will regenerate the JavaScript file every time you save.
