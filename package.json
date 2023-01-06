@@ -22,7 +22,7 @@
   ],
   "dependencies": {
     "encoding-down": "^7.1.0",
-    "fergies-inverted-index": "10.1.0",
+    "fergies-inverted-index": "11.0.0",
     "levelup": "^5.1.1",
     "memdown": "^6.1.1",
     "search-index": "3.3.0"
